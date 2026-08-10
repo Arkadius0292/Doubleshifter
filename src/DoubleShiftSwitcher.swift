@@ -28,7 +28,7 @@ class DoubleShiftSwitcher {
     }()
     
     func start() {
-        print("🚀 Double Shift Switcher v1.2.0 starting with Auto-Recovery...")
+        print("🚀 Double Shift Switcher v1.3.0 with Ultra-Fast RustDesk Sync...")
         fflush(stdout)
         
         while tap == nil {
@@ -41,7 +41,6 @@ class DoubleShiftSwitcher {
                 callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
                     let switcher = Unmanaged<DoubleShiftSwitcher>.fromOpaque(refcon!).takeUnretainedValue()
                     
-                    // Auto-reenable if disabled by timeout
                     if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
                         if let t = switcher.tap {
                             CGEvent.tapEnable(tap: t, enable: true)
@@ -66,7 +65,7 @@ class DoubleShiftSwitcher {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap!, enable: true)
         
-        print("✅ Double Shift Switcher Active 24/7!")
+        print("✅ Double Shift Switcher v1.3.0 Active!")
         fflush(stdout)
         CFRunLoopRun()
     }
@@ -74,7 +73,7 @@ class DoubleShiftSwitcher {
     private func handleEvent(type: CGEventType, event: CGEvent) {
         if type == .keyDown {
             let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-            if keyCode != 56 && keyCode != 60 { // 56: Left Shift, 60: Right Shift
+            if keyCode != 56 && keyCode != 60 {
                 isShiftPressed = false
             }
             return
@@ -96,7 +95,6 @@ class DoubleShiftSwitcher {
                         print("⚡️ Double Shift Triggered!")
                         fflush(stdout)
                         
-                        // Execute off-thread to prevent event tap timeout
                         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
                             self?.onDoubleShiftTriggered()
                         }
@@ -127,8 +125,8 @@ class DoubleShiftSwitcher {
         // 1. Send Copy shortcut
         postCopyShortcut(isRustDesk: isRustDesk)
         
-        // Wait 90ms for application to process copy
-        usleep(90000)
+        // Wait 110ms for application to copy
+        usleep(110000)
         
         let newChangeCount = pb.changeCount
         let newContent = pb.string(forType: .string) ?? ""
@@ -172,11 +170,8 @@ class DoubleShiftSwitcher {
         
         postPasteShortcut(isRustDesk: isRustDesk)
         
-        if enCount >= ruCount {
-            setLayoutTo(targetLanguage: "ru", isRustDesk: isRustDesk)
-        } else {
-            setLayoutTo(targetLanguage: "en", isRustDesk: isRustDesk)
-        }
+        let targetLang = enCount >= ruCount ? "ru" : "en"
+        setLayoutTo(targetLanguage: targetLang, isRustDesk: isRustDesk)
     }
     
     private func setLayoutTo(targetLanguage: String, isRustDesk: Bool) {
@@ -244,11 +239,18 @@ class DoubleShiftSwitcher {
     }
     
     private func syncLinuxServerLayout(targetLanguage: String) {
-        DispatchQueue.global(qos: .utility).async {
+        DispatchQueue.global(qos: .userInteractive).async {
             let layoutOrder = targetLanguage == "ru" ? "ru,us" : "us,ru"
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            p.arguments = ["-i", "/Users/KuleshAV/.ssh/Contabo_main6", "-o", "ConnectTimeout=2", "root@169.58.127.161", "sudo -u developer DISPLAY=:0 setxkbmap -layout '\(layoutOrder)'"]
+            p.arguments = [
+                "-i", "/Users/KuleshAV/.ssh/Contabo_main6",
+                "-o", "ControlMaster=auto",
+                "-o", "ControlPath=~/.ssh/sockets/%r@%h:%p",
+                "-o", "ControlPersist=1h",
+                "developer@169.58.127.161",
+                "DISPLAY=:0 setxkbmap -layout '\(layoutOrder)'"
+            ]
             try? p.run()
         }
     }
@@ -258,6 +260,7 @@ class DoubleShiftSwitcher {
         let keyChar: CGKeyCode = 8 // 'C'
         
         if isRustDesk {
+            // First post Ctrl+C
             if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: true),
                let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: false) {
                 keyDown.flags = .maskControl
@@ -265,14 +268,16 @@ class DoubleShiftSwitcher {
                 keyDown.post(tap: .cgAnnotatedSessionEventTap)
                 keyUp.post(tap: .cgAnnotatedSessionEventTap)
             }
-        } else {
-            if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: true),
-               let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: false) {
-                keyDown.flags = .maskCommand
-                keyUp.flags = .maskCommand
-                keyDown.post(tap: .cgAnnotatedSessionEventTap)
-                keyUp.post(tap: .cgAnnotatedSessionEventTap)
-            }
+            usleep(15000)
+        }
+        
+        // Post Cmd+C
+        if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: true),
+           let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: false) {
+            keyDown.flags = .maskCommand
+            keyUp.flags = .maskCommand
+            keyDown.post(tap: .cgAnnotatedSessionEventTap)
+            keyUp.post(tap: .cgAnnotatedSessionEventTap)
         }
     }
     
@@ -288,14 +293,15 @@ class DoubleShiftSwitcher {
                 keyDown.post(tap: .cgAnnotatedSessionEventTap)
                 keyUp.post(tap: .cgAnnotatedSessionEventTap)
             }
-        } else {
-            if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: true),
-               let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: false) {
-                keyDown.flags = .maskCommand
-                keyUp.flags = .maskCommand
-                keyDown.post(tap: .cgAnnotatedSessionEventTap)
-                keyUp.post(tap: .cgAnnotatedSessionEventTap)
-            }
+            usleep(15000)
+        }
+        
+        if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: true),
+           let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: false) {
+            keyDown.flags = .maskCommand
+            keyUp.flags = .maskCommand
+            keyDown.post(tap: .cgAnnotatedSessionEventTap)
+            keyUp.post(tap: .cgAnnotatedSessionEventTap)
         }
     }
 }
