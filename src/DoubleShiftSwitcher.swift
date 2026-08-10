@@ -27,7 +27,7 @@ class DoubleShiftSwitcher {
     }()
     
     func start() {
-        print("🚀 Double Shift Switcher v3.3.0 starting...")
+        print("🚀 Double Shift Switcher v4.0.0 (Native CGEvent Engine) starting...")
         fflush(stdout)
         
         let promptOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -69,7 +69,7 @@ class DoubleShiftSwitcher {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap!, enable: true)
         
-        print("✅ Double Shift Switcher v3.3.0 Active 24/7!")
+        print("✅ Double Shift Switcher v4.0.0 Active 24/7!")
         fflush(stdout)
         CFRunLoopRun()
     }
@@ -155,19 +155,19 @@ class DoubleShiftSwitcher {
         let pb = NSPasteboard.general
         let oldChangeCount = pb.changeCount
         
-        // 1. Сначала пробуем скопировать выделенный мышкой текст
-        postCopyShortcut()
-        usleep(60000)
+        // 1. Копируем выделенный мышкой текст через мгновенный CGEvent (Cmd+C)
+        postNativeKeyCombination(virtualKey: 8, flags: [.maskCommand]) // Cmd+C
+        usleep(40000)
         
         var textToInvert: String? = nil
         if pb.changeCount != oldChangeCount, let copied = pb.string(forType: .string), !copied.isEmpty {
             textToInvert = copied
         } else {
-            // 2. Если текст не выделен мышкой, автоматически выделяем последнее слово перед курсором
-            postSelectPreviousWordShortcut()
+            // 2. Если текст не был выделен мышкой - выделяем последнее слово (Option+Shift+LeftArrow)
+            postNativeKeyCombination(virtualKey: 123, flags: [.maskAlternate, .maskShift]) // Option+Shift+Left
+            usleep(40000)
+            postNativeKeyCombination(virtualKey: 8, flags: [.maskCommand]) // Cmd+C
             usleep(60000)
-            postCopyShortcut()
-            usleep(100000)
             textToInvert = pb.string(forType: .string)
         }
         
@@ -204,14 +204,31 @@ class DoubleShiftSwitcher {
         print("🔄 Inverting Mac Native: '\(selectedText)' -> '\(invertedText)'")
         fflush(stdout)
         
+        // Удаляем выделенный фрагмент текста кнопкой BackSpace перед вставкой!
+        postNativeKeyCombination(virtualKey: 51, flags: []) // BackSpace
+        usleep(20000)
+        
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(invertedText, forType: .string)
         
-        postPasteShortcut()
+        postNativeKeyCombination(virtualKey: 9, flags: [.maskCommand]) // Cmd+V
         
         let targetLang = enCount >= ruCount ? "ru" : "en"
         setMacLayoutTo(targetLanguage: targetLang)
+    }
+    
+    private func postNativeKeyCombination(virtualKey: CGKeyCode, flags: CGEventFlags) {
+        let src = CGEventSource(stateID: .hidSystemState)
+        if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: virtualKey, keyDown: true) {
+            keyDown.flags = flags
+            keyDown.post(tap: .cghidEventTap)
+        }
+        usleep(15000)
+        if let keyUp = CGEvent(keyboardEventSource: src, virtualKey: virtualKey, keyDown: false) {
+            keyUp.flags = flags
+            keyUp.post(tap: .cghidEventTap)
+        }
     }
     
     private func setMacLayoutTo(targetLanguage: String) {
@@ -267,21 +284,6 @@ class DoubleShiftSwitcher {
                 fflush(stdout)
             }
         }
-    }
-    
-    private func postSelectPreviousWordShortcut() {
-        let script = NSAppleScript(source: "tell application \"System Events\" to key code 123 using {option down, shift down}")
-        script?.executeAndReturnError(nil)
-    }
-    
-    private func postCopyShortcut() {
-        let script = NSAppleScript(source: "tell application \"System Events\" to keystroke \"c\" using command down")
-        script?.executeAndReturnError(nil)
-    }
-    
-    private func postPasteShortcut() {
-        let script = NSAppleScript(source: "tell application \"System Events\" to keystroke \"v\" using command down")
-        script?.executeAndReturnError(nil)
     }
 }
 
