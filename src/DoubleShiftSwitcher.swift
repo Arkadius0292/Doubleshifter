@@ -5,6 +5,7 @@ class DoubleShiftSwitcher {
     private var lastShiftReleaseTime: TimeInterval = 0
     private var isShiftPressed = false
     private let doubleTapThreshold: TimeInterval = 0.35 // 350ms window
+    private let sshCmd = ["ssh", "-i", "/Users/KuleshAV/.ssh/Contabo_main6", "root@169.58.127.161"]
     
     // EN -> RU mapping
     private let enToRu: [Character: Character] = [
@@ -27,7 +28,7 @@ class DoubleShiftSwitcher {
     }()
     
     func start() {
-        print("🚀 Double Shift Switcher starting...")
+        print("🚀 Double Shift Switcher starting with RustDesk Support...")
         fflush(stdout)
         
         var tap: CFMachPort? = nil
@@ -57,7 +58,7 @@ class DoubleShiftSwitcher {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap!, enable: true)
         
-        print("✅ Double Shift Switcher with Word Inversion Active 24/7!")
+        print("✅ Double Shift Switcher with RustDesk Integration Active!")
         fflush(stdout)
         CFRunLoopRun()
     }
@@ -96,30 +97,37 @@ class DoubleShiftSwitcher {
         }
     }
     
+    private func isRustDeskActive() -> Bool {
+        if let frontApp = NSWorkspace.shared.frontmostApplication,
+           let bundleID = frontApp.bundleIdentifier {
+            return bundleID.lowercased().contains("rustdesk")
+        }
+        return false
+    }
+    
     private func onDoubleShiftTriggered() {
+        let isRustDesk = isRustDeskActive()
         let pb = NSPasteboard.general
         let oldChangeCount = pb.changeCount
         let oldContent = pb.string(forType: .string) ?? ""
         
-        // 1. Send Copy shortcut
-        postCopyShortcut()
+        // 1. Send Copy shortcut (Cmd+C and Ctrl+C for RustDesk)
+        postCopyShortcut(isRustDesk: isRustDesk)
         
-        // Wait 90ms for application to copy text to clipboard
-        usleep(90000)
+        // Wait 100ms for application to process copy
+        usleep(100000)
         
         let newChangeCount = pb.changeCount
         let newContent = pb.string(forType: .string) ?? ""
         
-        // If clipboard content changed OR newContent is non-empty and different
         if (newChangeCount != oldChangeCount || newContent != oldContent) && !newContent.isEmpty {
-            invertSelectedTextAndSetLayout(selectedText: newContent)
+            invertSelectedTextAndSetLayout(selectedText: newContent, isRustDesk: isRustDesk)
         } else {
-            // No text selected: just toggle input layout
-            toggleLayout()
+            toggleLayout(isRustDesk: isRustDesk)
         }
     }
     
-    private func invertSelectedTextAndSetLayout(selectedText: String) {
+    private func invertSelectedTextAndSetLayout(selectedText: String, isRustDesk: Bool) {
         var invertedChars = [Character]()
         var enCount = 0
         var ruCount = 0
@@ -136,33 +144,30 @@ class DoubleShiftSwitcher {
             }
         }
         
-        // Only perform inversion if text contained invertable characters
         if enCount == 0 && ruCount == 0 {
-            toggleLayout()
+            toggleLayout(isRustDesk: isRustDesk)
             return
         }
         
         let invertedText = String(invertedChars)
-        print("🔄 Inverting: '\(selectedText)' -> '\(invertedText)' (EN:\(enCount) RU:\(ruCount))")
+        print("🔄 Inverting: '\(selectedText)' -> '\(invertedText)' (RustDesk: \(isRustDesk))")
         fflush(stdout)
         
-        // 1. Put inverted text on pasteboard
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(invertedText, forType: .string)
         
-        // 2. Paste inverted text
-        postPasteShortcut()
+        postPasteShortcut(isRustDesk: isRustDesk)
         
-        // 3. Set layout according to inverted language
         if enCount >= ruCount {
-            setLayoutTo(targetLanguage: "ru")
+            setLayoutTo(targetLanguage: "ru", isRustDesk: isRustDesk)
         } else {
-            setLayoutTo(targetLanguage: "en")
+            setLayoutTo(targetLanguage: "en", isRustDesk: isRustDesk)
         }
     }
     
-    private func setLayoutTo(targetLanguage: String) {
+    private func setLayoutTo(targetLanguage: String, isRustDesk: Bool) {
+        // 1. Set macOS input layout
         guard let inputSourceList = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return }
         
         for source in inputSourceList {
@@ -176,20 +181,25 @@ class DoubleShiftSwitcher {
                 let idStr = unsafeBitCast(sID, to: NSString.self).lowercased
                 if targetLanguage == "ru" && (idStr.contains("ru") || idStr.contains("russian")) {
                     TISSelectInputSource(source)
-                    print("🌐 Set layout to Russian")
+                    print("🌐 Set macOS layout to Russian")
                     fflush(stdout)
-                    return
+                    break
                 } else if targetLanguage == "en" && (idStr.contains("abc") || idStr.contains("us") || idStr.contains("english")) {
                     TISSelectInputSource(source)
-                    print("🌐 Set layout to English")
+                    print("🌐 Set macOS layout to English")
                     fflush(stdout)
-                    return
+                    break
                 }
             }
         }
+        
+        // 2. If in RustDesk, also set Linux X11 server layout via async SSH
+        if isRustDesk {
+            syncLinuxServerLayout(targetLanguage: targetLanguage)
+        }
     }
     
-    private func toggleLayout() {
+    private func toggleLayout(isRustDesk: Bool) {
         guard let inputSourceList = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return }
         let currentSource = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
         
@@ -211,15 +221,43 @@ class DoubleShiftSwitcher {
                 
                 let sourceID = TISGetInputSourceProperty(nextSource, kTISPropertyInputSourceID)
                 let name = unsafeBitCast(sourceID, to: NSString.self)
-                print("🌐 Toggled layout to:", name)
+                let targetLang = name.lowercased.contains("ru") || name.lowercased.contains("russian") ? "ru" : "en"
+                print("🌐 Toggled macOS layout to:", name)
                 fflush(stdout)
+                
+                if isRustDesk {
+                    syncLinuxServerLayout(targetLanguage: targetLang)
+                }
             }
         }
     }
     
-    private func postCopyShortcut() {
+    private func syncLinuxServerLayout(targetLanguage: String) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let layoutOrder = targetLanguage == "ru" ? "ru,us" : "us,ru"
+            let cmd = ["ssh", "-i", "/Users/KuleshAV/.ssh/Contabo_main6", "root@169.58.127.161", "sudo -u developer DISPLAY=:0 setxkbmap -layout '\(layoutOrder)'"]
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+            p.arguments = Array(cmd.dropFirst())
+            try? p.run()
+        }
+    }
+    
+    private func postCopyShortcut(isRustDesk: Bool) {
         let src = CGEventSource(stateID: .combinedSessionState)
-        // Key code 8: 'C'
+        
+        if isRustDesk {
+            // Send Ctrl+C for RustDesk
+            if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 8, keyDown: true),
+               let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 8, keyDown: false) {
+                keyDown.flags = .maskControl
+                keyUp.flags = .maskControl
+                keyDown.post(tap: .cgAnnotatedSessionEventTap)
+                keyUp.post(tap: .cgAnnotatedSessionEventTap)
+            }
+        }
+        
+        // Also send Cmd+C
         if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 8, keyDown: true),
            let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 8, keyDown: false) {
             keyDown.flags = .maskCommand
@@ -229,9 +267,21 @@ class DoubleShiftSwitcher {
         }
     }
     
-    private func postPasteShortcut() {
+    private func postPasteShortcut(isRustDesk: Bool) {
         let src = CGEventSource(stateID: .combinedSessionState)
-        // Key code 9: 'V'
+        
+        if isRustDesk {
+            // Send Ctrl+V for RustDesk
+            if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true),
+               let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false) {
+                keyDown.flags = .maskControl
+                keyUp.flags = .maskControl
+                keyDown.post(tap: .cgAnnotatedSessionEventTap)
+                keyUp.post(tap: .cgAnnotatedSessionEventTap)
+            }
+        }
+        
+        // Also send Cmd+V
         if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true),
            let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false) {
             keyDown.flags = .maskCommand
