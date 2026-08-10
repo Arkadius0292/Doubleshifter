@@ -5,7 +5,7 @@ class DoubleShiftSwitcher {
     private var lastShiftReleaseTime: TimeInterval = 0
     private var isShiftPressed = false
     private let doubleTapThreshold: TimeInterval = 0.35 // 350ms window
-    private let sshCmd = ["ssh", "-i", "/Users/KuleshAV/.ssh/Contabo_main6", "root@169.58.127.161"]
+    var tap: CFMachPort? = nil
     
     // EN -> RU mapping
     private let enToRu: [Character: Character] = [
@@ -28,10 +28,9 @@ class DoubleShiftSwitcher {
     }()
     
     func start() {
-        print("🚀 Double Shift Switcher starting with RustDesk Support...")
+        print("🚀 Double Shift Switcher v1.2.0 starting with Auto-Recovery...")
         fflush(stdout)
         
-        var tap: CFMachPort? = nil
         while tap == nil {
             let eventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
             tap = CGEvent.tapCreate(
@@ -41,6 +40,15 @@ class DoubleShiftSwitcher {
                 eventsOfInterest: CGEventMask(eventMask),
                 callback: { (proxy, type, event, refcon) -> Unmanaged<CGEvent>? in
                     let switcher = Unmanaged<DoubleShiftSwitcher>.fromOpaque(refcon!).takeUnretainedValue()
+                    
+                    // Auto-reenable if disabled by timeout
+                    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                        if let t = switcher.tap {
+                            CGEvent.tapEnable(tap: t, enable: true)
+                        }
+                        return Unmanaged.passUnretained(event)
+                    }
+                    
                     switcher.handleEvent(type: type, event: event)
                     return Unmanaged.passUnretained(event)
                 },
@@ -58,7 +66,7 @@ class DoubleShiftSwitcher {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap!, enable: true)
         
-        print("✅ Double Shift Switcher with RustDesk Integration Active!")
+        print("✅ Double Shift Switcher Active 24/7!")
         fflush(stdout)
         CFRunLoopRun()
     }
@@ -87,7 +95,12 @@ class DoubleShiftSwitcher {
                     if (now - lastShiftReleaseTime) <= doubleTapThreshold {
                         print("⚡️ Double Shift Triggered!")
                         fflush(stdout)
-                        onDoubleShiftTriggered()
+                        
+                        // Execute off-thread to prevent event tap timeout
+                        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
+                            self?.onDoubleShiftTriggered()
+                        }
+                        
                         lastShiftReleaseTime = 0
                     } else {
                         lastShiftReleaseTime = now
@@ -111,11 +124,11 @@ class DoubleShiftSwitcher {
         let oldChangeCount = pb.changeCount
         let oldContent = pb.string(forType: .string) ?? ""
         
-        // 1. Send Copy shortcut (Cmd+C and Ctrl+C for RustDesk)
+        // 1. Send Copy shortcut
         postCopyShortcut(isRustDesk: isRustDesk)
         
-        // Wait 100ms for application to process copy
-        usleep(100000)
+        // Wait 90ms for application to process copy
+        usleep(90000)
         
         let newChangeCount = pb.changeCount
         let newContent = pb.string(forType: .string) ?? ""
@@ -167,7 +180,6 @@ class DoubleShiftSwitcher {
     }
     
     private func setLayoutTo(targetLanguage: String, isRustDesk: Bool) {
-        // 1. Set macOS input layout
         guard let inputSourceList = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return }
         
         for source in inputSourceList {
@@ -193,7 +205,6 @@ class DoubleShiftSwitcher {
             }
         }
         
-        // 2. If in RustDesk, also set Linux X11 server layout via async SSH
         if isRustDesk {
             syncLinuxServerLayout(targetLanguage: targetLanguage)
         }
@@ -233,61 +244,58 @@ class DoubleShiftSwitcher {
     }
     
     private func syncLinuxServerLayout(targetLanguage: String) {
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .utility).async {
             let layoutOrder = targetLanguage == "ru" ? "ru,us" : "us,ru"
-            let cmd = ["ssh", "-i", "/Users/KuleshAV/.ssh/Contabo_main6", "root@169.58.127.161", "sudo -u developer DISPLAY=:0 setxkbmap -layout '\(layoutOrder)'"]
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            p.arguments = Array(cmd.dropFirst())
+            p.arguments = ["-i", "/Users/KuleshAV/.ssh/Contabo_main6", "-o", "ConnectTimeout=2", "root@169.58.127.161", "sudo -u developer DISPLAY=:0 setxkbmap -layout '\(layoutOrder)'"]
             try? p.run()
         }
     }
     
     private func postCopyShortcut(isRustDesk: Bool) {
         let src = CGEventSource(stateID: .combinedSessionState)
+        let keyChar: CGKeyCode = 8 // 'C'
         
         if isRustDesk {
-            // Send Ctrl+C for RustDesk
-            if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 8, keyDown: true),
-               let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 8, keyDown: false) {
+            if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: true),
+               let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: false) {
                 keyDown.flags = .maskControl
                 keyUp.flags = .maskControl
                 keyDown.post(tap: .cgAnnotatedSessionEventTap)
                 keyUp.post(tap: .cgAnnotatedSessionEventTap)
             }
-        }
-        
-        // Also send Cmd+C
-        if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 8, keyDown: true),
-           let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 8, keyDown: false) {
-            keyDown.flags = .maskCommand
-            keyUp.flags = .maskCommand
-            keyDown.post(tap: .cgAnnotatedSessionEventTap)
-            keyUp.post(tap: .cgAnnotatedSessionEventTap)
+        } else {
+            if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: true),
+               let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: false) {
+                keyDown.flags = .maskCommand
+                keyUp.flags = .maskCommand
+                keyDown.post(tap: .cgAnnotatedSessionEventTap)
+                keyUp.post(tap: .cgAnnotatedSessionEventTap)
+            }
         }
     }
     
     private func postPasteShortcut(isRustDesk: Bool) {
         let src = CGEventSource(stateID: .combinedSessionState)
+        let keyChar: CGKeyCode = 9 // 'V'
         
         if isRustDesk {
-            // Send Ctrl+V for RustDesk
-            if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true),
-               let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false) {
+            if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: true),
+               let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: false) {
                 keyDown.flags = .maskControl
                 keyUp.flags = .maskControl
                 keyDown.post(tap: .cgAnnotatedSessionEventTap)
                 keyUp.post(tap: .cgAnnotatedSessionEventTap)
             }
-        }
-        
-        // Also send Cmd+V
-        if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true),
-           let keyUp = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false) {
-            keyDown.flags = .maskCommand
-            keyUp.flags = .maskCommand
-            keyDown.post(tap: .cgAnnotatedSessionEventTap)
-            keyUp.post(tap: .cgAnnotatedSessionEventTap)
+        } else {
+            if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: true),
+               let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: false) {
+                keyDown.flags = .maskCommand
+                keyUp.flags = .maskCommand
+                keyDown.post(tap: .cgAnnotatedSessionEventTap)
+                keyUp.post(tap: .cgAnnotatedSessionEventTap)
+            }
         }
     }
 }
