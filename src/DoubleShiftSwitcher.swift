@@ -29,7 +29,7 @@ class DoubleShiftSwitcher {
     }()
     
     func start() {
-        print("🚀 Double Shift Switcher v3.0.0 (Native + Remote Hybrid Engine) starting...")
+        print("🚀 Double Shift Switcher v3.1.0 starting...")
         fflush(stdout)
         
         let promptOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -71,7 +71,7 @@ class DoubleShiftSwitcher {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap!, enable: true)
         
-        print("✅ Double Shift Switcher v3.0.0 Hybrid Active 24/7!")
+        print("✅ Double Shift Switcher v3.1.0 Active 24/7!")
         fflush(stdout)
         CFRunLoopRun()
     }
@@ -129,18 +129,13 @@ class DoubleShiftSwitcher {
         let isRustDesk = isRustDeskActive()
         
         if isRustDesk {
-            // Execute server-side native X11 inverter
             executeRemoteInverter(invertLastWord: invertLastWord)
         } else {
-            // Execute native macOS inverter
             executeNativeMacInverter(invertLastWord: invertLastWord)
         }
     }
     
     private func executeRemoteInverter(invertLastWord: Bool) {
-        print("🖥 Executing Remote X11 Inverter for RustDesk...")
-        fflush(stdout)
-        
         let arg = invertLastWord ? "--last-word" : ""
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
@@ -156,22 +151,23 @@ class DoubleShiftSwitcher {
     }
     
     private func executeNativeMacInverter(invertLastWord: Bool) {
-        let pb = NSPasteboard.general
-        let oldChangeCount = pb.changeCount
-        let oldContent = pb.string(forType: .string) ?? ""
-        
-        if invertLastWord {
-            postSelectPreviousWordShortcut()
-            usleep(60000)
+        // REGULAR DOUBLE SHIFT (No Cmd):
+        // SIMPLY TOGGLE MAC LAYOUT AND EXIT IMMEDIATELY!
+        // ZERO APPLE SCRIPT, ZERO KEYSTROKE "C", ZERO COPY, ZERO PASTE!
+        if !invertLastWord {
+            toggleMacLayout()
+            return
         }
+        
+        // CMD + DOUBLE SHIFT (Invert last word):
+        postSelectPreviousWordShortcut()
+        usleep(60000)
         
         postCopyShortcut()
         usleep(100000)
         
-        let newChangeCount = pb.changeCount
-        let newContent = pb.string(forType: .string) ?? ""
-        
-        if (newChangeCount != oldChangeCount || newContent != oldContent) && !newContent.isEmpty {
+        let pb = NSPasteboard.general
+        if let newContent = pb.string(forType: .string), !newContent.isEmpty {
             invertSelectedTextAndSetLayout(selectedText: newContent)
         } else {
             toggleMacLayout()
