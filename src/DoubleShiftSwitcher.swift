@@ -29,7 +29,12 @@ class DoubleShiftSwitcher {
     }()
     
     func start() {
-        print("🚀 Double Shift Switcher v2.0.0 (Cmd+DoubleShift Last Word Inversion)...")
+        print("🚀 Double Shift Switcher v2.1.0 starting...")
+        fflush(stdout)
+        
+        let promptOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        let trusted = AXIsProcessTrustedWithOptions(promptOptions)
+        print("🔐 Accessibility Trusted Status:", trusted)
         fflush(stdout)
         
         while tap == nil {
@@ -66,7 +71,7 @@ class DoubleShiftSwitcher {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap!, enable: true)
         
-        print("✅ Double Shift Switcher v2.0.0 Active!")
+        print("✅ Double Shift Switcher v2.1.0 Active 24/7!")
         fflush(stdout)
         CFRunLoopRun()
     }
@@ -127,14 +132,12 @@ class DoubleShiftSwitcher {
         let oldContent = pb.string(forType: .string) ?? ""
         
         if invertLastWord {
-            // Option+Shift+LeftArrow to highlight previous word
             postSelectPreviousWordShortcut()
-            usleep(40000)
+            usleep(50000)
         }
         
-        // Send Cmd+C
         postCopyShortcut()
-        usleep(80000)
+        usleep(90000)
         
         let newChangeCount = pb.changeCount
         let newContent = pb.string(forType: .string) ?? ""
@@ -264,38 +267,57 @@ class DoubleShiftSwitcher {
     }
     
     private func postSelectPreviousWordShortcut() {
-        let src = CGEventSource(stateID: .combinedSessionState)
-        let keyLeft: CGKeyCode = 123 // Left Arrow
-        if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyLeft, keyDown: true),
-           let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyLeft, keyDown: false) {
-            keyDown.flags = [.maskAlternate, .maskShift]
-            keyUp.flags = [.maskAlternate, .maskShift]
-            keyDown.post(tap: .cgAnnotatedSessionEventTap)
-            keyUp.post(tap: .cgAnnotatedSessionEventTap)
+        let src = CGEventSource(stateID: .hidSystemState)
+        let flags: CGEventFlags = [.maskAlternate, .maskShift]
+        let keyLeft: CGKeyCode = 123
+        
+        if let optDown = CGEvent(keyboardEventSource: src, virtualKey: 58, keyDown: true),
+           let shiftDown = CGEvent(keyboardEventSource: src, virtualKey: 56, keyDown: true),
+           let leftDown = CGEvent(keyboardEventSource: src, virtualKey: keyLeft, keyDown: true),
+           let leftUp = CGEvent(keyboardEventSource: src, virtualKey: keyLeft, keyDown: false),
+           let shiftUp = CGEvent(keyboardEventSource: src, virtualKey: 56, keyDown: false),
+           let optUp = CGEvent(keyboardEventSource: src, virtualKey: 58, keyDown: false) {
+            
+            optDown.flags = flags; optDown.post(tap: .cgAnnotatedSessionEventTap)
+            shiftDown.flags = flags; shiftDown.post(tap: .cgAnnotatedSessionEventTap)
+            leftDown.flags = flags; leftDown.post(tap: .cgAnnotatedSessionEventTap)
+            leftUp.flags = flags; leftUp.post(tap: .cgAnnotatedSessionEventTap)
+            shiftUp.flags = flags; shiftUp.post(tap: .cgAnnotatedSessionEventTap)
+            optUp.flags = flags; optUp.post(tap: .cgAnnotatedSessionEventTap)
         }
     }
     
     private func postCopyShortcut() {
-        let src = CGEventSource(stateID: .combinedSessionState)
-        let keyChar: CGKeyCode = 8 // 'C'
-        if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: true),
-           let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: false) {
-            keyDown.flags = .maskCommand
-            keyUp.flags = .maskCommand
-            keyDown.post(tap: .cgAnnotatedSessionEventTap)
-            keyUp.post(tap: .cgAnnotatedSessionEventTap)
+        let src = CGEventSource(stateID: .hidSystemState)
+        let cmdKey: CGKeyCode = 55 // Left Command
+        let cKey: CGKeyCode = 8    // 'c'
+        
+        if let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: cmdKey, keyDown: true),
+           let cDown = CGEvent(keyboardEventSource: src, virtualKey: cKey, keyDown: true),
+           let cUp = CGEvent(keyboardEventSource: src, virtualKey: cKey, keyDown: false),
+           let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: cmdKey, keyDown: false) {
+            
+            cmdDown.flags = .maskCommand; cmdDown.post(tap: .cgAnnotatedSessionEventTap)
+            cDown.flags = .maskCommand; cDown.post(tap: .cgAnnotatedSessionEventTap)
+            cUp.flags = .maskCommand; cUp.post(tap: .cgAnnotatedSessionEventTap)
+            cmdUp.flags = .maskCommand; cmdUp.post(tap: .cgAnnotatedSessionEventTap)
         }
     }
     
     private func postPasteShortcut() {
-        let src = CGEventSource(stateID: .combinedSessionState)
-        let keyChar: CGKeyCode = 9 // 'V'
-        if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: true),
-           let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: false) {
-            keyDown.flags = .maskCommand
-            keyUp.flags = .maskCommand
-            keyDown.post(tap: .cgAnnotatedSessionEventTap)
-            keyUp.post(tap: .cgAnnotatedSessionEventTap)
+        let src = CGEventSource(stateID: .hidSystemState)
+        let cmdKey: CGKeyCode = 55 // Left Command
+        let vKey: CGKeyCode = 9    // 'v'
+        
+        if let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: cmdKey, keyDown: true),
+           let vDown = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: true),
+           let vUp = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: false),
+           let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: cmdKey, keyDown: false) {
+            
+            cmdDown.flags = .maskCommand; cmdDown.post(tap: .cgAnnotatedSessionEventTap)
+            vDown.flags = .maskCommand; vDown.post(tap: .cgAnnotatedSessionEventTap)
+            vUp.flags = .maskCommand; vUp.post(tap: .cgAnnotatedSessionEventTap)
+            cmdUp.flags = .maskCommand; cmdUp.post(tap: .cgAnnotatedSessionEventTap)
         }
     }
 }
