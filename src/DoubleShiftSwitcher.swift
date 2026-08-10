@@ -27,7 +27,7 @@ class DoubleShiftSwitcher {
     }()
     
     func start() {
-        print("🚀 Double Shift Switcher v3.2.0 starting...")
+        print("🚀 Double Shift Switcher v3.3.0 starting...")
         fflush(stdout)
         
         let promptOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -69,7 +69,7 @@ class DoubleShiftSwitcher {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap!, enable: true)
         
-        print("✅ Double Shift Switcher v3.2.0 Active 24/7!")
+        print("✅ Double Shift Switcher v3.3.0 Active 24/7!")
         fflush(stdout)
         CFRunLoopRun()
     }
@@ -96,9 +96,8 @@ class DoubleShiftSwitcher {
                     isShiftPressed = false
                     let now = Date().timeIntervalSince1970
                     if (now - lastShiftReleaseTime) <= doubleTapThreshold {
-                        // invertLastWord IS ONLY TRUE IF COMMAND KEY IS PHYSICALLY HELD DOWN RIGHT NOW
                         let invertLastWord = flags.contains(.maskCommand)
-                        print("⚡️ Double Shift Triggered! (InvertLastWord: \(invertLastWord))")
+                        print("⚡️ Double Shift Triggered! (InvertMode: \(invertLastWord))")
                         fflush(stdout)
                         
                         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
@@ -153,15 +152,27 @@ class DoubleShiftSwitcher {
             return
         }
         
-        postSelectPreviousWordShortcut()
+        let pb = NSPasteboard.general
+        let oldChangeCount = pb.changeCount
+        
+        // 1. Сначала пробуем скопировать выделенный мышкой текст
+        postCopyShortcut()
         usleep(60000)
         
-        postCopyShortcut()
-        usleep(100000)
+        var textToInvert: String? = nil
+        if pb.changeCount != oldChangeCount, let copied = pb.string(forType: .string), !copied.isEmpty {
+            textToInvert = copied
+        } else {
+            // 2. Если текст не выделен мышкой, автоматически выделяем последнее слово перед курсором
+            postSelectPreviousWordShortcut()
+            usleep(60000)
+            postCopyShortcut()
+            usleep(100000)
+            textToInvert = pb.string(forType: .string)
+        }
         
-        let pb = NSPasteboard.general
-        if let newContent = pb.string(forType: .string), !newContent.isEmpty {
-            invertSelectedTextAndSetLayout(selectedText: newContent)
+        if let text = textToInvert, !text.isEmpty {
+            invertSelectedTextAndSetLayout(selectedText: text)
         } else {
             toggleMacLayout()
         }
