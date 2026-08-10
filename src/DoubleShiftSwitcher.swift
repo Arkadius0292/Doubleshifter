@@ -4,7 +4,6 @@ import Carbon
 class DoubleShiftSwitcher {
     private var lastShiftReleaseTime: TimeInterval = 0
     private var isShiftPressed = false
-    private var isCmdDownWhenShiftPressed = false
     private let doubleTapThreshold: TimeInterval = 0.35 // 350ms window
     var tap: CFMachPort? = nil
     
@@ -19,7 +18,6 @@ class DoubleShiftSwitcher {
         "`": "ё", "~": "Ё", "@": "\"", "#": "№", "$": ";", "^": ":", "&": "?"
     ]
     
-    // RU -> EN mapping
     private lazy var ruToEn: [Character: Character] = {
         var map = [Character: Character]()
         for (k, v) in enToRu {
@@ -29,7 +27,7 @@ class DoubleShiftSwitcher {
     }()
     
     func start() {
-        print("🚀 Double Shift Switcher v3.1.0 starting...")
+        print("🚀 Double Shift Switcher v3.2.0 starting...")
         fflush(stdout)
         
         let promptOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -71,7 +69,7 @@ class DoubleShiftSwitcher {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap!, enable: true)
         
-        print("✅ Double Shift Switcher v3.1.0 Active 24/7!")
+        print("✅ Double Shift Switcher v3.2.0 Active 24/7!")
         fflush(stdout)
         CFRunLoopRun()
     }
@@ -91,16 +89,15 @@ class DoubleShiftSwitcher {
             
             if keyCode == 56 || keyCode == 60 {
                 let shiftIsDown = flags.contains(.maskShift)
-                let cmdIsDown = flags.contains(.maskCommand)
                 
                 if shiftIsDown && !isShiftPressed {
                     isShiftPressed = true
-                    isCmdDownWhenShiftPressed = cmdIsDown
                 } else if !shiftIsDown && isShiftPressed {
                     isShiftPressed = false
                     let now = Date().timeIntervalSince1970
                     if (now - lastShiftReleaseTime) <= doubleTapThreshold {
-                        let invertLastWord = isCmdDownWhenShiftPressed || cmdIsDown
+                        // invertLastWord IS ONLY TRUE IF COMMAND KEY IS PHYSICALLY HELD DOWN RIGHT NOW
+                        let invertLastWord = flags.contains(.maskCommand)
                         print("⚡️ Double Shift Triggered! (InvertLastWord: \(invertLastWord))")
                         fflush(stdout)
                         
@@ -151,15 +148,11 @@ class DoubleShiftSwitcher {
     }
     
     private func executeNativeMacInverter(invertLastWord: Bool) {
-        // REGULAR DOUBLE SHIFT (No Cmd):
-        // SIMPLY TOGGLE MAC LAYOUT AND EXIT IMMEDIATELY!
-        // ZERO APPLE SCRIPT, ZERO KEYSTROKE "C", ZERO COPY, ZERO PASTE!
         if !invertLastWord {
             toggleMacLayout()
             return
         }
         
-        // CMD + DOUBLE SHIFT (Invert last word):
         postSelectPreviousWordShortcut()
         usleep(60000)
         
