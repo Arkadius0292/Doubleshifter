@@ -4,6 +4,7 @@ import Carbon
 class DoubleShiftSwitcher {
     private var lastShiftReleaseTime: TimeInterval = 0
     private var isShiftPressed = false
+    private var isCmdDownWhenShiftPressed = false
     private let doubleTapThreshold: TimeInterval = 0.35 // 350ms window
     var tap: CFMachPort? = nil
     
@@ -28,7 +29,7 @@ class DoubleShiftSwitcher {
     }()
     
     func start() {
-        print("🚀 Double Shift Switcher v1.3.0 with Ultra-Fast RustDesk Sync...")
+        print("🚀 Double Shift Switcher v2.0.0 (Cmd+DoubleShift Last Word Inversion)...")
         fflush(stdout)
         
         while tap == nil {
@@ -65,7 +66,7 @@ class DoubleShiftSwitcher {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap!, enable: true)
         
-        print("✅ Double Shift Switcher v1.3.0 Active!")
+        print("✅ Double Shift Switcher v2.0.0 Active!")
         fflush(stdout)
         CFRunLoopRun()
     }
@@ -73,7 +74,7 @@ class DoubleShiftSwitcher {
     private func handleEvent(type: CGEventType, event: CGEvent) {
         if type == .keyDown {
             let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
-            if keyCode != 56 && keyCode != 60 {
+            if keyCode != 56 && keyCode != 60 { // Left/Right Shift
                 isShiftPressed = false
             }
             return
@@ -85,18 +86,21 @@ class DoubleShiftSwitcher {
             
             if keyCode == 56 || keyCode == 60 {
                 let shiftIsDown = flags.contains(.maskShift)
+                let cmdIsDown = flags.contains(.maskCommand)
                 
                 if shiftIsDown && !isShiftPressed {
                     isShiftPressed = true
+                    isCmdDownWhenShiftPressed = cmdIsDown
                 } else if !shiftIsDown && isShiftPressed {
                     isShiftPressed = false
                     let now = Date().timeIntervalSince1970
                     if (now - lastShiftReleaseTime) <= doubleTapThreshold {
-                        print("⚡️ Double Shift Triggered!")
+                        let invertLastWord = isCmdDownWhenShiftPressed || cmdIsDown
+                        print("⚡️ Double Shift Triggered! (InvertLastWord: \(invertLastWord))")
                         fflush(stdout)
                         
                         DispatchQueue.global(qos: .userInteractive).async { [weak self] in
-                            self?.onDoubleShiftTriggered()
+                            self?.onDoubleShiftTriggered(invertLastWord: invertLastWord)
                         }
                         
                         lastShiftReleaseTime = 0
@@ -116,17 +120,21 @@ class DoubleShiftSwitcher {
         return false
     }
     
-    private func onDoubleShiftTriggered() {
+    private func onDoubleShiftTriggered(invertLastWord: Bool) {
         let isRustDesk = isRustDeskActive()
         let pb = NSPasteboard.general
         let oldChangeCount = pb.changeCount
         let oldContent = pb.string(forType: .string) ?? ""
         
-        // 1. Send Copy shortcut
-        postCopyShortcut(isRustDesk: isRustDesk)
+        if invertLastWord {
+            // Option+Shift+LeftArrow to highlight previous word
+            postSelectPreviousWordShortcut()
+            usleep(40000)
+        }
         
-        // Wait 110ms for application to copy
-        usleep(110000)
+        // Send Cmd+C
+        postCopyShortcut()
+        usleep(80000)
         
         let newChangeCount = pb.changeCount
         let newContent = pb.string(forType: .string) ?? ""
@@ -168,7 +176,7 @@ class DoubleShiftSwitcher {
         pb.clearContents()
         pb.setString(invertedText, forType: .string)
         
-        postPasteShortcut(isRustDesk: isRustDesk)
+        postPasteShortcut()
         
         let targetLang = enCount >= ruCount ? "ru" : "en"
         setLayoutTo(targetLanguage: targetLang, isRustDesk: isRustDesk)
@@ -255,23 +263,21 @@ class DoubleShiftSwitcher {
         }
     }
     
-    private func postCopyShortcut(isRustDesk: Bool) {
+    private func postSelectPreviousWordShortcut() {
+        let src = CGEventSource(stateID: .combinedSessionState)
+        let keyLeft: CGKeyCode = 123 // Left Arrow
+        if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyLeft, keyDown: true),
+           let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyLeft, keyDown: false) {
+            keyDown.flags = [.maskAlternate, .maskShift]
+            keyUp.flags = [.maskAlternate, .maskShift]
+            keyDown.post(tap: .cgAnnotatedSessionEventTap)
+            keyUp.post(tap: .cgAnnotatedSessionEventTap)
+        }
+    }
+    
+    private func postCopyShortcut() {
         let src = CGEventSource(stateID: .combinedSessionState)
         let keyChar: CGKeyCode = 8 // 'C'
-        
-        if isRustDesk {
-            // First post Ctrl+C
-            if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: true),
-               let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: false) {
-                keyDown.flags = .maskControl
-                keyUp.flags = .maskControl
-                keyDown.post(tap: .cgAnnotatedSessionEventTap)
-                keyUp.post(tap: .cgAnnotatedSessionEventTap)
-            }
-            usleep(15000)
-        }
-        
-        // Post Cmd+C
         if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: true),
            let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: false) {
             keyDown.flags = .maskCommand
@@ -281,21 +287,9 @@ class DoubleShiftSwitcher {
         }
     }
     
-    private func postPasteShortcut(isRustDesk: Bool) {
+    private func postPasteShortcut() {
         let src = CGEventSource(stateID: .combinedSessionState)
         let keyChar: CGKeyCode = 9 // 'V'
-        
-        if isRustDesk {
-            if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: true),
-               let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: false) {
-                keyDown.flags = .maskControl
-                keyUp.flags = .maskControl
-                keyDown.post(tap: .cgAnnotatedSessionEventTap)
-                keyUp.post(tap: .cgAnnotatedSessionEventTap)
-            }
-            usleep(15000)
-        }
-        
         if let keyDown = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: true),
            let keyUp = CGEvent(keyboardEventSource: src, virtualKey: keyChar, keyDown: false) {
             keyDown.flags = .maskCommand
