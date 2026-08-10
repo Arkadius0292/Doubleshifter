@@ -29,7 +29,7 @@ class DoubleShiftSwitcher {
     }()
     
     func start() {
-        print("🚀 Double Shift Switcher v2.2.0 starting with System Events Engine...")
+        print("🚀 Double Shift Switcher v3.0.0 (Native + Remote Hybrid Engine) starting...")
         fflush(stdout)
         
         let promptOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -71,7 +71,7 @@ class DoubleShiftSwitcher {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap!, enable: true)
         
-        print("✅ Double Shift Switcher v2.2.0 Active!")
+        print("✅ Double Shift Switcher v3.0.0 Hybrid Active 24/7!")
         fflush(stdout)
         CFRunLoopRun()
     }
@@ -127,6 +127,35 @@ class DoubleShiftSwitcher {
     
     private func onDoubleShiftTriggered(invertLastWord: Bool) {
         let isRustDesk = isRustDeskActive()
+        
+        if isRustDesk {
+            // Execute server-side native X11 inverter
+            executeRemoteInverter(invertLastWord: invertLastWord)
+        } else {
+            // Execute native macOS inverter
+            executeNativeMacInverter(invertLastWord: invertLastWord)
+        }
+    }
+    
+    private func executeRemoteInverter(invertLastWord: Bool) {
+        print("🖥 Executing Remote X11 Inverter for RustDesk...")
+        fflush(stdout)
+        
+        let arg = invertLastWord ? "--last-word" : ""
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        p.arguments = [
+            "-i", "/Users/KuleshAV/.ssh/Contabo_main6",
+            "-o", "ControlMaster=auto",
+            "-o", "ControlPath=~/.ssh/sockets/%r@%h:%p",
+            "-o", "ControlPersist=1h",
+            "developer@169.58.127.161",
+            "/usr/local/bin/remote_invert_word.py \(arg)"
+        ]
+        try? p.run()
+    }
+    
+    private func executeNativeMacInverter(invertLastWord: Bool) {
         let pb = NSPasteboard.general
         let oldChangeCount = pb.changeCount
         let oldContent = pb.string(forType: .string) ?? ""
@@ -143,13 +172,13 @@ class DoubleShiftSwitcher {
         let newContent = pb.string(forType: .string) ?? ""
         
         if (newChangeCount != oldChangeCount || newContent != oldContent) && !newContent.isEmpty {
-            invertSelectedTextAndSetLayout(selectedText: newContent, isRustDesk: isRustDesk)
+            invertSelectedTextAndSetLayout(selectedText: newContent)
         } else {
-            toggleLayout(isRustDesk: isRustDesk)
+            toggleMacLayout()
         }
     }
     
-    private func invertSelectedTextAndSetLayout(selectedText: String, isRustDesk: Bool) {
+    private func invertSelectedTextAndSetLayout(selectedText: String) {
         var invertedChars = [Character]()
         var enCount = 0
         var ruCount = 0
@@ -167,12 +196,12 @@ class DoubleShiftSwitcher {
         }
         
         if enCount == 0 && ruCount == 0 {
-            toggleLayout(isRustDesk: isRustDesk)
+            toggleMacLayout()
             return
         }
         
         let invertedText = String(invertedChars)
-        print("🔄 Inverting: '\(selectedText)' -> '\(invertedText)' (RustDesk: \(isRustDesk))")
+        print("🔄 Inverting Mac Native: '\(selectedText)' -> '\(invertedText)'")
         fflush(stdout)
         
         let pb = NSPasteboard.general
@@ -182,10 +211,10 @@ class DoubleShiftSwitcher {
         postPasteShortcut()
         
         let targetLang = enCount >= ruCount ? "ru" : "en"
-        setLayoutTo(targetLanguage: targetLang, isRustDesk: isRustDesk)
+        setMacLayoutTo(targetLanguage: targetLang)
     }
     
-    private func setLayoutTo(targetLanguage: String, isRustDesk: Bool) {
+    private func setMacLayoutTo(targetLanguage: String) {
         guard let inputSourceList = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return }
         
         for source in inputSourceList {
@@ -210,13 +239,9 @@ class DoubleShiftSwitcher {
                 }
             }
         }
-        
-        if isRustDesk {
-            syncLinuxServerLayout(targetLanguage: targetLanguage)
-        }
     }
     
-    private func toggleLayout(isRustDesk: Bool) {
+    private func toggleMacLayout() {
         guard let inputSourceList = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return }
         let currentSource = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
         
@@ -238,31 +263,9 @@ class DoubleShiftSwitcher {
                 
                 let sourceID = TISGetInputSourceProperty(nextSource, kTISPropertyInputSourceID)
                 let name = unsafeBitCast(sourceID, to: NSString.self)
-                let targetLang = name.lowercased.contains("ru") || name.lowercased.contains("russian") ? "ru" : "en"
                 print("🌐 Toggled macOS layout to:", name)
                 fflush(stdout)
-                
-                if isRustDesk {
-                    syncLinuxServerLayout(targetLanguage: targetLang)
-                }
             }
-        }
-    }
-    
-    private func syncLinuxServerLayout(targetLanguage: String) {
-        DispatchQueue.global(qos: .userInteractive).async {
-            let layoutOrder = targetLanguage == "ru" ? "ru,us" : "us,ru"
-            let p = Process()
-            p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            p.arguments = [
-                "-i", "/Users/KuleshAV/.ssh/Contabo_main6",
-                "-o", "ControlMaster=auto",
-                "-o", "ControlPath=~/.ssh/sockets/%r@%h:%p",
-                "-o", "ControlPersist=1h",
-                "developer@169.58.127.161",
-                "DISPLAY=:0 setxkbmap -layout '\(layoutOrder)'"
-            ]
-            try? p.run()
         }
     }
     
