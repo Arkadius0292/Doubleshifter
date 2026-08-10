@@ -29,7 +29,7 @@ class DoubleShiftSwitcher {
     }()
     
     func start() {
-        print("🚀 Double Shift Switcher v2.1.0 starting...")
+        print("🚀 Double Shift Switcher v2.2.0 starting with System Events Engine...")
         fflush(stdout)
         
         let promptOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -71,7 +71,7 @@ class DoubleShiftSwitcher {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap!, enable: true)
         
-        print("✅ Double Shift Switcher v2.1.0 Active 24/7!")
+        print("✅ Double Shift Switcher v2.2.0 Active!")
         fflush(stdout)
         CFRunLoopRun()
     }
@@ -133,11 +133,11 @@ class DoubleShiftSwitcher {
         
         if invertLastWord {
             postSelectPreviousWordShortcut()
-            usleep(50000)
+            usleep(60000)
         }
         
         postCopyShortcut()
-        usleep(90000)
+        usleep(100000)
         
         let newChangeCount = pb.changeCount
         let newContent = pb.string(forType: .string) ?? ""
@@ -267,58 +267,18 @@ class DoubleShiftSwitcher {
     }
     
     private func postSelectPreviousWordShortcut() {
-        let src = CGEventSource(stateID: .hidSystemState)
-        let flags: CGEventFlags = [.maskAlternate, .maskShift]
-        let keyLeft: CGKeyCode = 123
-        
-        if let optDown = CGEvent(keyboardEventSource: src, virtualKey: 58, keyDown: true),
-           let shiftDown = CGEvent(keyboardEventSource: src, virtualKey: 56, keyDown: true),
-           let leftDown = CGEvent(keyboardEventSource: src, virtualKey: keyLeft, keyDown: true),
-           let leftUp = CGEvent(keyboardEventSource: src, virtualKey: keyLeft, keyDown: false),
-           let shiftUp = CGEvent(keyboardEventSource: src, virtualKey: 56, keyDown: false),
-           let optUp = CGEvent(keyboardEventSource: src, virtualKey: 58, keyDown: false) {
-            
-            optDown.flags = flags; optDown.post(tap: .cgAnnotatedSessionEventTap)
-            shiftDown.flags = flags; shiftDown.post(tap: .cgAnnotatedSessionEventTap)
-            leftDown.flags = flags; leftDown.post(tap: .cgAnnotatedSessionEventTap)
-            leftUp.flags = flags; leftUp.post(tap: .cgAnnotatedSessionEventTap)
-            shiftUp.flags = flags; shiftUp.post(tap: .cgAnnotatedSessionEventTap)
-            optUp.flags = flags; optUp.post(tap: .cgAnnotatedSessionEventTap)
-        }
+        let script = NSAppleScript(source: "tell application \"System Events\" to key code 123 using {option down, shift down}")
+        script?.executeAndReturnError(nil)
     }
     
     private func postCopyShortcut() {
-        let src = CGEventSource(stateID: .hidSystemState)
-        let cmdKey: CGKeyCode = 55 // Left Command
-        let cKey: CGKeyCode = 8    // 'c'
-        
-        if let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: cmdKey, keyDown: true),
-           let cDown = CGEvent(keyboardEventSource: src, virtualKey: cKey, keyDown: true),
-           let cUp = CGEvent(keyboardEventSource: src, virtualKey: cKey, keyDown: false),
-           let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: cmdKey, keyDown: false) {
-            
-            cmdDown.flags = .maskCommand; cmdDown.post(tap: .cgAnnotatedSessionEventTap)
-            cDown.flags = .maskCommand; cDown.post(tap: .cgAnnotatedSessionEventTap)
-            cUp.flags = .maskCommand; cUp.post(tap: .cgAnnotatedSessionEventTap)
-            cmdUp.flags = .maskCommand; cmdUp.post(tap: .cgAnnotatedSessionEventTap)
-        }
+        let script = NSAppleScript(source: "tell application \"System Events\" to keystroke \"c\" using command down")
+        script?.executeAndReturnError(nil)
     }
     
     private func postPasteShortcut() {
-        let src = CGEventSource(stateID: .hidSystemState)
-        let cmdKey: CGKeyCode = 55 // Left Command
-        let vKey: CGKeyCode = 9    // 'v'
-        
-        if let cmdDown = CGEvent(keyboardEventSource: src, virtualKey: cmdKey, keyDown: true),
-           let vDown = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: true),
-           let vUp = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: false),
-           let cmdUp = CGEvent(keyboardEventSource: src, virtualKey: cmdKey, keyDown: false) {
-            
-            cmdDown.flags = .maskCommand; cmdDown.post(tap: .cgAnnotatedSessionEventTap)
-            vDown.flags = .maskCommand; vDown.post(tap: .cgAnnotatedSessionEventTap)
-            vUp.flags = .maskCommand; vUp.post(tap: .cgAnnotatedSessionEventTap)
-            cmdUp.flags = .maskCommand; cmdUp.post(tap: .cgAnnotatedSessionEventTap)
-        }
+        let script = NSAppleScript(source: "tell application \"System Events\" to keystroke \"v\" using command down")
+        script?.executeAndReturnError(nil)
     }
 }
 
