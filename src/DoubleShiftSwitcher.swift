@@ -27,7 +27,7 @@ class DoubleShiftSwitcher {
     }()
     
     func start() {
-        print("🚀 Double Shift Switcher v4.0.0 (Native CGEvent Engine) starting...")
+        print("🚀 Double Shift Switcher v4.1.0 (Multi-Client Master Engine) starting...")
         fflush(stdout)
         
         let promptOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
@@ -122,13 +122,8 @@ class DoubleShiftSwitcher {
     }
     
     private func onDoubleShiftTriggered(invertLastWord: Bool) {
-        let isRustDesk = isRustDeskActive()
-        
-        if isRustDesk {
-            executeRemoteInverter(invertLastWord: invertLastWord)
-        } else {
-            executeNativeMacInverter(invertLastWord: invertLastWord)
-        }
+        // v4.1.0 Single Source of Truth Architecture: All layout toggles & inversions run 100% natively on Mac
+        executeNativeMacInverter(invertLastWord: invertLastWord)
     }
     
     private func executeRemoteInverter(invertLastWord: Bool) {
