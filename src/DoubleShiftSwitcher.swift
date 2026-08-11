@@ -122,8 +122,17 @@ class DoubleShiftSwitcher {
     }
     
     private func onDoubleShiftTriggered(invertLastWord: Bool) {
-        // v4.1.0 Single Source of Truth Architecture: All layout toggles & inversions run 100% natively on Mac
-        executeNativeMacInverter(invertLastWord: invertLastWord)
+        // 1. Всегда переключаем раскладку на Маке для визуала и синхрона
+        if !invertLastWord {
+            toggleMacLayout()
+        }
+        
+        // 2. Если активен RustDesk - синхронно переключаем/инвертируем сервер
+        if isRustDeskActive() {
+            executeRemoteInverter(invertLastWord: invertLastWord)
+        } else if invertLastWord {
+            executeNativeMacInverter(invertLastWord: true)
+        }
     }
     
     private func executeRemoteInverter(invertLastWord: Bool) {
