@@ -143,7 +143,7 @@ class DoubleShiftSwitcher {
             "-o", "ControlPath=~/.ssh/sockets/%r@%h:%p",
             "-o", "ControlPersist=1h",
             "developer@169.58.127.161",
-            "su - developer -c 'DISPLAY=:0 /usr/local/bin/remote_invert_word.py'"
+            "DISPLAY=:0 XAUTHORITY=/home/developer/.Xauthority /usr/local/bin/remote_invert_word.py"
         ]
         try? p.run()
     }
