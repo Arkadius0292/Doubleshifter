@@ -69,9 +69,54 @@ class DoubleShiftSwitcher {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap!, enable: true)
         
-        print("✅ Double Shift Switcher v4.0.0 Active 24/7!")
+        // 🚀 Наблюдатель Любой Смены Раскладки на Маке (мышью в меню, Cmd+Space, Ctrl+Space, DoubleShift)
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDistributedCenter(),
+            Unmanaged.passUnretained(self).toOpaque(),
+            { (center, observer, name, object, userInfo) in
+                guard let obs = observer else { return }
+                let switcher = Unmanaged<DoubleShiftSwitcher>.fromOpaque(obs).takeUnretainedValue()
+                switcher.onSystemLayoutChanged()
+            },
+            kTISNotifySelectedKeyboardInputSourceChanged,
+            nil,
+            .deliverImmediately
+        )
+        
+        print("✅ Double Shift Switcher v4.5.0 Active 24/7 (With Universal Top-Bar Layout Observer)!")
         fflush(stdout)
         CFRunLoopRun()
+    }
+    
+    @objc private func onSystemLayoutChanged() {
+        let currentSource = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+        let sourceID = TISGetInputSourceProperty(currentSource, kTISPropertyInputSourceID)
+        let idStr = unsafeBitCast(sourceID, to: NSString.self).lowercased
+        
+        let isRu = idStr.contains("ru") || idStr.contains("russian")
+        print("🌐 System Layout Change Detected on Mac! Current ID: \(idStr) (isRu: \(isRu))")
+        fflush(stdout)
+        
+        if isRustDeskActive() {
+            syncServerLayout(targetLanguage: isRu ? "ru" : "en")
+        }
+    }
+    
+    private func syncServerLayout(targetLanguage: String) {
+        print("🌐 Syncing server layout to: \(targetLanguage)")
+        fflush(stdout)
+        let arg = targetLanguage == "ru" ? "ru" : "en"
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        p.arguments = [
+            "-i", "/Users/KuleshAV/.ssh/Contabo_main6",
+            "-o", "ControlMaster=auto",
+            "-o", "ControlPath=~/.ssh/sockets/%r@%h:%p",
+            "-o", "ControlPersist=1h",
+            "developer@169.58.127.161",
+            "DISPLAY=:0 XAUTHORITY=/home/developer/.Xauthority /usr/local/bin/set_server_layout.py \(arg)"
+        ]
+        try? p.run()
     }
     
     private func handleEvent(type: CGEventType, event: CGEvent) {
