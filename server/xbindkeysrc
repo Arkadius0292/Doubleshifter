@@ -1,0 +1,24 @@
+# xbindkeys — только инверсия последнего слова по клавише Alt.
+#
+# HUD выбора сессии и переключение сессий отсюда УБРАНЫ: их ведёт
+# kiosk_system_keyboard_daemon.service. Раньше одни и те же сочетания
+# (Alt+Space, F12, Ctrl+Alt+K, Alt+1..4) висели здесь, в openbox И в демоне —
+# одно нажатие Alt+1 запускало direct_switch.py трижды.
+#
+# Скрипт сменён с invert_word.py на remote_invert_word.py: в старом точки
+# внутри IP превращались в "ю" (10.10.10.1 -> 10ю10ю10ю1) и затирался буфер
+# обмена.
+#
+# Прежняя версия файла — в /usr/local/backup/doubleshift-*/xbindkeysrc
+
+# Правый Alt — инвертировать последнее слово
+"/usr/local/bin/remote_invert_word.py --last-word"
+  c:108
+
+# То же при включённом NumLock
+"/usr/local/bin/remote_invert_word.py --last-word"
+  Mod2 + c:108
+
+# Отпускание левого Alt
+"/usr/local/bin/remote_invert_word.py --last-word"
+  Alt + Release + c:64
