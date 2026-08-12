@@ -114,27 +114,37 @@ class DoubleShiftSwitcher {
     }
     
     private func isRustDeskActive() -> Bool {
-        if let frontApp = NSWorkspace.shared.frontmostApplication,
-           let bundleID = frontApp.bundleIdentifier {
-            return bundleID.lowercased().contains("rustdesk")
+        guard let frontApp = NSWorkspace.shared.frontmostApplication else { return false }
+        let bundleID = frontApp.bundleIdentifier?.lowercased() ?? ""
+        let name = frontApp.localizedName?.lowercased() ?? ""
+        let appPath = frontApp.executableURL?.path.lowercased() ?? ""
+        
+        let isActive = bundleID.contains("rustdesk") || name.contains("rustdesk") || appPath.contains("rustdesk")
+        if isActive {
+            print("🎯 RustDesk window detected frontmost (bundle: \(bundleID), name: \(name))")
+            fflush(stdout)
         }
-        return false
+        return isActive
     }
     
     private func onDoubleShiftTriggered(invertLastWord: Bool) {
+        let isRustDesk = isRustDeskActive()
+        print("⚡️ Double Shift Triggered! (InvertMode: \(invertLastWord), RustDesk: \(isRustDesk))")
+        fflush(stdout)
+        
         if !invertLastWord {
-            // 1. Обычный Double Shift (Смена языка): переключаем на Маке и синхронизируем сервер
             toggleMacLayout()
-            if isRustDeskActive() {
+            if isRustDesk {
                 executeRemoteLayoutToggle()
             }
         } else {
-            // 2. Cmd + Double Shift (Инверсия слова/текста): используем 100% нативный Mac CGEvent движок!
             executeNativeMacInverter(invertLastWord: true)
         }
     }
     
     private func executeRemoteLayoutToggle() {
+        print("🌐 Syncing remote server layout via SSH...")
+        fflush(stdout)
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
         p.arguments = [
@@ -180,11 +190,17 @@ class DoubleShiftSwitcher {
         if pb.changeCount != oldChangeCount, let copied = pb.string(forType: .string), !copied.isEmpty {
             textToInvert = copied
         } else {
-            // 2. Если текст не был выделен мышкой - выделяем последнее слово (Option+Shift+LeftArrow)
-            postNativeKeyCombination(virtualKey: 123, flags: [.maskAlternate, .maskShift]) // Option+Shift+Left
-            usleep(40000)
+            // 2. Если текст не был выделен мышкой - выделяем последнее слово!
+            if isRustDeskActive() {
+                // В Linux X11 (RustDesk) выделение предыдущего слова - это Ctrl+Shift+Left (на Маке отправляем Cmd+Shift+Left!)
+                postNativeKeyCombination(virtualKey: 123, flags: [.maskCommand, .maskShift]) // Cmd+Shift+Left
+            } else {
+                // В macOS выделение предыдущего слова - это Option+Shift+Left
+                postNativeKeyCombination(virtualKey: 123, flags: [.maskAlternate, .maskShift]) // Option+Shift+Left
+            }
+            usleep(50000)
             postNativeKeyCombination(virtualKey: 8, flags: [.maskCommand]) // Cmd+C
-            usleep(60000)
+            usleep(70000)
             textToInvert = pb.string(forType: .string)
         }
         
