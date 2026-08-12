@@ -122,17 +122,30 @@ class DoubleShiftSwitcher {
     }
     
     private func onDoubleShiftTriggered(invertLastWord: Bool) {
-        // 1. Всегда переключаем раскладку на Маке для визуала и синхрона
         if !invertLastWord {
+            // 1. Обычный Double Shift (Смена языка): переключаем на Маке и синхронизируем сервер
             toggleMacLayout()
-        }
-        
-        // 2. Если активен RustDesk - синхронно переключаем/инвертируем сервер
-        if isRustDeskActive() {
-            executeRemoteInverter(invertLastWord: invertLastWord)
-        } else if invertLastWord {
+            if isRustDeskActive() {
+                executeRemoteLayoutToggle()
+            }
+        } else {
+            // 2. Cmd + Double Shift (Инверсия слова/текста): используем 100% нативный Mac CGEvent движок!
             executeNativeMacInverter(invertLastWord: true)
         }
+    }
+    
+    private func executeRemoteLayoutToggle() {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+        p.arguments = [
+            "-i", "/Users/KuleshAV/.ssh/Contabo_main6",
+            "-o", "ControlMaster=auto",
+            "-o", "ControlPath=~/.ssh/sockets/%r@%h:%p",
+            "-o", "ControlPersist=1h",
+            "developer@169.58.127.161",
+            "su - developer -c 'DISPLAY=:0 /usr/local/bin/remote_invert_word.py'"
+        ]
+        try? p.run()
     }
     
     private func executeRemoteInverter(invertLastWord: Bool) {
@@ -188,6 +201,10 @@ class DoubleShiftSwitcher {
         var ruCount = 0
         
         for char in selectedText {
+            if char.isNumber {
+                invertedChars.append(char)
+                continue
+            }
             if let ruChar = enToRu[char] {
                 invertedChars.append(ruChar)
                 enCount += 1
@@ -201,6 +218,9 @@ class DoubleShiftSwitcher {
         
         if enCount == 0 && ruCount == 0 {
             toggleMacLayout()
+            if isRustDeskActive() {
+                executeRemoteLayoutToggle()
+            }
             return
         }
         
@@ -220,6 +240,9 @@ class DoubleShiftSwitcher {
         
         let targetLang = enCount >= ruCount ? "ru" : "en"
         setMacLayoutTo(targetLanguage: targetLang)
+        if isRustDeskActive() {
+            executeRemoteLayoutToggle()
+        }
     }
     
     private func postNativeKeyCombination(virtualKey: CGKeyCode, flags: CGEventFlags) {
