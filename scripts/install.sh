@@ -1,18 +1,30 @@
 #!/usr/bin/env bash
-set -e
+# Установка Doubleshifter на macOS.
+#
+# Владелец процесса — launchd, и только он: два одновременно живущих экземпляра
+# ловят один и тот же двойной Shift и переключают раскладку дважды, то есть
+# визуально не переключают вовсе. Для пересборки уже установленной копии
+# используйте ../rebuild.sh.
 
-echo "🚀 Installing Doubleshifter for macOS..."
+set -euo pipefail
 
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_DIR="/Applications/DoubleShift.app"
-mkdir -p "$APP_DIR/Contents/MacOS"
-mkdir -p "$APP_DIR/Contents/Resources"
+BIN="$APP_DIR/Contents/MacOS/DoubleShift"
+LABEL="com.user.double_shift_switcher"
+PLIST_SRC="$REPO_DIR/launchd/$LABEL.plist"
+PLIST_PATH="$HOME/Library/LaunchAgents/$LABEL.plist"
 
-# Compile Swift code
-swiftc src/DoubleShiftSwitcher.swift -o "$APP_DIR/Contents/MacOS/DoubleShift"
-chmod +x "$APP_DIR/Contents/MacOS/DoubleShift"
-codesign -f -s - "$APP_DIR/Contents/MacOS/DoubleShift"
+echo "🚀 Установка Doubleshifter для macOS..."
 
-# Create Info.plist
+mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
+
+echo "▶︎ сборка"
+swiftc -O -g "$REPO_DIR/src/DoubleShiftSwitcher.swift" -o "$BIN" \
+    -framework AppKit -framework Carbon
+chmod +x "$BIN"
+codesign -f -s - "$BIN"
+
 cat > "$APP_DIR/Contents/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -27,18 +39,32 @@ cat > "$APP_DIR/Contents/Info.plist" << 'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>5.0.0</string>
     <key>LSUIElement</key>
     <true/>
 </dict>
 </plist>
 PLIST
 
-# Install LaunchAgent
-PLIST_PATH="$HOME/Library/LaunchAgents/com.user.doubleshift.plist"
-cp launchd/com.user.doubleshift.plist "$PLIST_PATH"
+echo "▶︎ установка LaunchAgent"
+mkdir -p "$HOME/Library/LaunchAgents"
+cp "$PLIST_SRC" "$PLIST_PATH"
 
-launchctl unload "$PLIST_PATH" 2>/dev/null || true
-launchctl load -w "$PLIST_PATH"
+launchctl bootout "gui/$UID/$LABEL" 2>/dev/null || true
+pkill -f "$BIN" 2>/dev/null || true
+sleep 1
+launchctl bootstrap "gui/$UID" "$PLIST_PATH"
+sleep 2
 
-echo "✅ Doubleshifter successfully installed and active!"
+COUNT=$(pgrep -f "$BIN" | wc -l | tr -d ' ')
+if [ "$COUNT" != "1" ]; then
+    echo "⚠️ живых процессов: $COUNT, ожидается 1 — проверьте launchctl list | grep $LABEL"
+    exit 1
+fi
+
+echo "✅ Doubleshifter установлен и запущен."
+echo
+echo "Осталось выдать права: System Settings → Privacy & Security → Accessibility → DoubleShift."
+echo "Без них перехват клавиш не работает, а инверсия не может прочитать выделенный текст."
+echo "Процесс подхватит права сам, перезапускать не нужно:"
+echo "    tail -f /tmp/double_shift_switcher.log"
