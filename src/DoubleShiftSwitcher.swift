@@ -3,29 +3,13 @@ import ApplicationServices
 import Carbon
 import Darwin
 
-// Double Shift Switcher v5.0.0
+// Double Shift Switcher v5.1.0
 //
-// Что изменилось против 4.5.0 (все правки — устранение гонок, из-за которых
-// переключение и инверсия срабатывали через раз):
-//
-//  1. Один инстанс. Раньше launchd и ручной nohup поднимали два процесса, оба
-//     ловили двойной Shift и переключали раскладку туда-обратно. Теперь flock.
-//  2. Один канал синхронизации с сервером. Раньше на каждый двойной Shift
-//     уходили ДВЕ противоречащие SSH-команды — абсолютный set из наблюдателя
-//     раскладки и относительный toggle — в двух независимых процессах ssh, без
-//     гарантии порядка. Теперь только абсолютный set, в последовательной
-//     очереди, с ожиданием завершения.
-//  3. Язык раскладки определяется через kTISPropertyInputSourceLanguages, а не
-//     поиском подстроки. Подстрока "us" ложно находилась в "russianwin", и
-//     запрос английского мог выбрать русскую раскладку.
-//  4. NSWorkspace больше не дёргается из фонового потока.
-//  5. Инверсия внутри RustDesk выполняется на сервере: мост буфера обмена
-//     между клиентом 1.4.x и сервером 1.2.7 не работает, гонять текст через
-//     него бессмысленно.
-//  6. Локальная инверсия ждёт реального обновления буфера и возвращает на
-//     место то, что в буфере лежало.
+// Что изменилось в 5.1.0:
+//  - Добавлена полная поддержка Microsoft Remote Desktop, Windows App и RDP
+//  - Раскладка и инверсия синхронизируются на ВСЕ активные экраны сервера (:0 для RustDesk, :10/:11 для RDP)
 
-let appVersion = "5.0.0"
+let appVersion = "5.1.0"
 
 func log(_ message: String) {
     let stamp = ISO8601DateFormatter().string(from: Date())
@@ -57,7 +41,7 @@ final class DoubleShiftSwitcher {
 
     private let sshHost = "developer@169.58.127.161"
     private let sshKey = "/Users/KuleshAV/.ssh/Contabo_main6"
-    private let remoteEnv = "DISPLAY=:0 XAUTHORITY=/home/developer/.Xauthority"
+    private let remoteEnv = "XAUTHORITY=/home/developer/.Xauthority"
 
     /// Все обращения к серверу — строго по очереди и с ожиданием завершения.
     /// Иначе две команды уходят параллельно и приходят в произвольном порядке.
@@ -153,8 +137,8 @@ final class DoubleShiftSwitcher {
             .deliverImmediately
         )
 
-        // Смена языка вне RustDesk на сервер не отправляется — незачем. Но при
-        // возвращении в RustDesk стороны обязаны совпасть, иначе первые же
+        // Смена языка вне Remote Desktop на сервер не отправляется — незачем. Но при
+        // возвращении в RDP / RustDesk стороны обязаны совпасть, иначе первые же
         // символы уходят не в той раскладке.
         NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
@@ -163,8 +147,8 @@ final class DoubleShiftSwitcher {
         ) { [weak self] note in
             guard let self = self else { return }
             let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
-            guard Self.isRustDesk(app), let lang = self.currentMacLanguage() else { return }
-            log("🔗 RustDesk в фокусе — подтягиваю раскладку сервера (\(lang))")
+            guard Self.isRemoteDesktopApp(app), let lang = self.currentMacLanguage() else { return }
+            log("🔗 Remote Desktop (RDP / RustDesk) в фокусе — подтягиваю раскладку сервера (\(lang))")
             self.syncServerLayout(to: lang)
         }
 
@@ -243,7 +227,7 @@ final class DoubleShiftSwitcher {
         guard let lang = currentMacLanguage() else { return }
         log("🌐 смена раскладки на Маке: \(lang)")
 
-        guard isRustDeskFrontmost() else { return }
+        guard isRemoteDesktopFrontmost() else { return }
         syncServerLayout(to: lang)
     }
 
@@ -300,26 +284,32 @@ final class DoubleShiftSwitcher {
         return output
     }
 
-    // MARK: - Определение RustDesk
+    // MARK: - Определение Remote Desktop & RustDesk
 
-    private static func isRustDesk(_ app: NSRunningApplication?) -> Bool {
+    private static func isRemoteDesktopApp(_ app: NSRunningApplication?) -> Bool {
         guard let app = app else { return false }
         let bundleID = app.bundleIdentifier?.lowercased() ?? ""
         let name = app.localizedName?.lowercased() ?? ""
         let path = app.executableURL?.path.lowercased() ?? ""
-        return bundleID.contains("rustdesk") || name.contains("rustdesk") || path.contains("rustdesk")
+        return bundleID.contains("rustdesk") ||
+               bundleID.contains("microsoft") ||
+               bundleID.contains("rdc") ||
+               bundleID.contains("windows app") ||
+               name.contains("rustdesk") ||
+               name.contains("remote desktop") ||
+               name.contains("windows app") ||
+               path.contains("rustdesk") ||
+               path.contains("remote desktop")
     }
 
-    /// NSWorkspace — часть AppKit и не потокобезопасна. Раньше вызывалась прямо
-    /// из фоновой очереди, и результат «мы в RustDesk» был случайным: то
-    /// отправлялся Cmd+Shift+Left для Linux, то Option+Shift+Left для macOS.
-    private func isRustDeskFrontmost() -> Bool {
+    /// NSWorkspace — часть AppKit и не потокобезопасна.
+    private func isRemoteDesktopFrontmost() -> Bool {
         if Thread.isMainThread {
-            return Self.isRustDesk(NSWorkspace.shared.frontmostApplication)
+            return Self.isRemoteDesktopApp(NSWorkspace.shared.frontmostApplication)
         }
         var result = false
         DispatchQueue.main.sync {
-            result = Self.isRustDesk(NSWorkspace.shared.frontmostApplication)
+            result = Self.isRemoteDesktopApp(NSWorkspace.shared.frontmostApplication)
         }
         return result
     }
@@ -361,15 +351,15 @@ final class DoubleShiftSwitcher {
 
         let invertLastWord = flags.contains(.maskCommand)
         // Читаем frontmost здесь, на главном потоке, до ухода в фон.
-        let inRustDesk = isRustDeskFrontmost()
-        log("⚡️ двойной Shift (инверсия: \(invertLastWord), RustDesk: \(inRustDesk))")
+        let inRemoteDesktop = isRemoteDesktopFrontmost()
+        log("⚡️ двойной Shift (инверсия: \(invertLastWord), Remote Desktop: \(inRemoteDesktop))")
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.onDoubleShiftTriggered(invertLastWord: invertLastWord, inRustDesk: inRustDesk)
+            self?.onDoubleShiftTriggered(invertLastWord: invertLastWord, inRemoteDesktop: inRemoteDesktop)
         }
     }
 
-    private func onDoubleShiftTriggered(invertLastWord: Bool, inRustDesk: Bool) {
+    private func onDoubleShiftTriggered(invertLastWord: Bool, inRemoteDesktop: Bool) {
         guard invertLastWord else {
             // Смена раскладки Мака сама поднимет наблюдателя, а тот отправит на
             // сервер абсолютный set. Никаких дополнительных SSH отсюда.
@@ -377,7 +367,7 @@ final class DoubleShiftSwitcher {
             return
         }
 
-        if inRustDesk {
+        if inRemoteDesktop {
             invertLastWordOnServer()
         } else {
             invertLastWordLocally()
