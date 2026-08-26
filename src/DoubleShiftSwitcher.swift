@@ -3,16 +3,16 @@ import ApplicationServices
 import Carbon
 import Darwin
 
-// Double Shift Switcher v6.0.0 (Pure macOS Edition)
+// Double Shift Switcher v6.2.0 (Pure macOS Edition)
 //
-// 100% локальная утилита для macOS без удалённых серверов и сетевых зависимостей:
-//  - Двойной тап по клавише Shift -> мгновенное переключение раскладки (Русский <-> Английский)
-//  - Cmd + Двойной Shift -> инверсия регистра и раскладки последнего слова / выделения
-//  - Защита IP-адресов и чисел от мутации
-//  - Автовосстановление EventTap при сбросе macOS
-//  - Защита от дублирующих инстансов через flock
+// Режимы работы:
+// 1. Двойной Shift (без Cmd):
+//    - Если текст ВЫДЕЛЕН (в любой программе) -> инвертирует выделенный фрагмент
+//    - Если текст НЕ выделен -> переключает раскладку (Русский <-> Английский)
+// 2. Cmd + Двойной Shift:
+//    - Всегда инвертирует последнее набранное слово (независимо от того, был ли пробел)
 
-let appVersion = "6.0.0"
+let appVersion = "6.2.0"
 
 func log(_ message: String) {
     let stamp = ISO8601DateFormatter().string(from: Date())
@@ -20,14 +20,10 @@ func log(_ message: String) {
     fflush(stdout)
 }
 
-/// Не даём запуститься второму экземпляру
 func acquireSingleInstanceLock() {
     let path = "/tmp/double_shift_switcher.lock"
     let fd = open(path, O_CREAT | O_RDWR, 0o644)
-    if fd < 0 {
-        log("⚠️ не открывается \(path) — защита от второго инстанса выключена")
-        return
-    }
+    if fd < 0 { return }
     if flock(fd, LOCK_EX | LOCK_NB) != 0 {
         log("⛔️ уже запущен другой DoubleShift — выходим")
         exit(0)
@@ -37,9 +33,8 @@ func acquireSingleInstanceLock() {
 final class DoubleShiftSwitcher {
     private var lastShiftReleaseTime: TimeInterval = 0
     private var isShiftPressed = false
-    private let doubleTapThreshold: TimeInterval = 0.35
+    private let doubleTapThreshold: TimeInterval = 0.38
     var tap: CFMachPort?
-    private var watchdogTimer: Timer?
 
     private let enToRu: [Character: Character] = [
         "q": "й", "w": "ц", "e": "у", "r": "к", "t": "е", "y": "н", "u": "г", "i": "ш", "o": "щ", "p": "з", "[": "х", "]": "ъ",
@@ -58,7 +53,6 @@ final class DoubleShiftSwitcher {
         return map
     }()
 
-    /// Точка и запятая внутри числа — разделители IP, версии или дроби, а не буквы
     private func isNumericPunctuation(_ chars: [Character], _ i: Int) -> Bool {
         guard chars[i] == "." || chars[i] == "," else { return false }
         let leftIsDigit = i > 0 && chars[i - 1].isNumber
@@ -69,61 +63,43 @@ final class DoubleShiftSwitcher {
     // MARK: - Запуск
 
     func start() {
-        log("🚀 Double Shift Switcher v\(appVersion) (Pure macOS) starting...")
+        log("🚀 Double Shift Switcher v\(appVersion) starting...")
 
-        let promptOptions = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        let isTrusted = AXIsProcessTrustedWithOptions(promptOptions)
+        let isTrusted = AXIsProcessTrusted()
         log("🔐 Accessibility Trusted Status: \(isTrusted)")
 
-        var waitLogged = false
-        while tap == nil {
-            let eventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
-            tap = CGEvent.tapCreate(
-                tap: .cgSessionEventTap,
-                place: .headInsertEventTap,
-                options: .listenOnly,
-                eventsOfInterest: CGEventMask(eventMask),
-                callback: { (_, type, event, refcon) -> Unmanaged<CGEvent>? in
-                    guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
-                    let switcher = Unmanaged<DoubleShiftSwitcher>.fromOpaque(refcon).takeUnretainedValue()
+        let eventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
+        guard let createdTap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: CGEventMask(eventMask),
+            callback: { (_, type, event, refcon) -> Unmanaged<CGEvent>? in
+                guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
+                let switcher = Unmanaged<DoubleShiftSwitcher>.fromOpaque(refcon).takeUnretainedValue()
 
-                    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                        log("⚠️ Event tap отключен macOS (\(type.rawValue)), восстанавливаю...")
-                        if let t = switcher.tap {
-                            CGEvent.tapEnable(tap: t, enable: true)
-                        }
-                        return Unmanaged.passUnretained(event)
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    if let t = switcher.tap {
+                        CGEvent.tapEnable(tap: t, enable: true)
                     }
-
-                    switcher.handleEvent(type: type, event: event)
                     return Unmanaged.passUnretained(event)
-                },
-                userInfo: Unmanaged.passUnretained(self).toOpaque()
-            )
-
-            if tap == nil {
-                if !waitLogged {
-                    log("⚠️ Нет доступа к Accessibility. Ожидаю выдачи прав...")
-                    waitLogged = true
                 }
-                Thread.sleep(forTimeInterval: 2.0)
-            }
+
+                switcher.handleEvent(type: type, event: event)
+                return Unmanaged.passUnretained(event)
+            },
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        ) else {
+            log("❌ Ошибка создания EventTap.")
+            return
         }
 
-        let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        self.tap = createdTap
+        let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, createdTap, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
-        CGEvent.tapEnable(tap: tap!, enable: true)
+        CGEvent.tapEnable(tap: createdTap, enable: true)
 
-        // Сторожевой таймер: каждые 5 секунд проверяем, активен ли event tap
-        watchdogTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            guard let self = self, let t = self.tap else { return }
-            if !CGEvent.tapIsEnabled(tap: t) {
-                log("⚡️ Watchdog: Event tap был выключен, включаю обратно")
-                CGEvent.tapEnable(tap: t, enable: true)
-            }
-        }
-
-        log("✅ Double Shift Switcher v\(appVersion) активен")
+        log("✅ Double Shift Switcher v\(appVersion) готов к работе!")
         CFRunLoopRun()
     }
 
@@ -136,11 +112,6 @@ final class DoubleShiftSwitcher {
         if first.hasPrefix("ru") { return "ru" }
         if first.hasPrefix("en") { return "en" }
         return first
-    }
-
-    private func sourceID(of source: TISInputSource) -> String {
-        guard let raw = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else { return "?" }
-        return unsafeBitCast(raw, to: NSString.self) as String
     }
 
     private func selectableLayouts() -> [(source: TISInputSource, lang: String)] {
@@ -167,25 +138,19 @@ final class DoubleShiftSwitcher {
 
     private func setMacLayout(to targetLanguage: String) {
         guard currentMacLanguage() != targetLanguage else { return }
-        guard let match = selectableLayouts().first(where: { $0.lang == targetLanguage }) else {
-            log("⚠️ На Маке нет раскладки для языка '\(targetLanguage)'")
-            return
-        }
+        guard let match = selectableLayouts().first(where: { $0.lang == targetLanguage }) else { return }
         TISSelectInputSource(match.source)
-        log("🌐 Раскладка Мака -> \(targetLanguage) (\(sourceID(of: match.source)))")
+        log("🌐 Раскладка -> \(targetLanguage)")
     }
 
     private func toggleMacLayout() {
         let layouts = selectableLayouts()
-        guard layouts.count > 1 else {
-            log("⚠️ Переключать нечего: активна только одна раскладка")
-            return
-        }
+        guard layouts.count > 1 else { return }
         let current = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
         let currentIndex = layouts.firstIndex { $0.source == current } ?? -1
         let next = layouts[(currentIndex + 1) % layouts.count]
         TISSelectInputSource(next.source)
-        log("🌐 Раскладка переключена -> \(next.lang) (\(sourceID(of: next.source)))")
+        log("🌐 Раскладка переключена -> \(next.lang)")
     }
 
     // MARK: - Перехват двойного Shift
@@ -221,78 +186,86 @@ final class DoubleShiftSwitcher {
         }
         lastShiftReleaseTime = 0
 
-        let invertLastWord = flags.contains(.maskCommand)
-        log("⚡️ Двойной Shift (инверсия: \(invertLastWord))")
+        let cmdPressed = flags.contains(.maskCommand)
+        log("⚡️ Двойной Shift (Cmd: \(cmdPressed))")
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.onDoubleShiftTriggered(invertLastWord: invertLastWord)
+            self?.processAction(forceLastWord: cmdPressed)
         }
     }
 
-    private func onDoubleShiftTriggered(invertLastWord: Bool) {
-        if invertLastWord {
-            invertLastWordLocally()
+    private func processAction(forceLastWord: Bool) {
+        if forceLastWord {
+            log("📝 Инверсия последнего слова (Cmd + Double Shift)")
+            invertLastWord()
+            return
+        }
+
+        // Проверяем, выделен ли текст в данный момент
+        if let selected = getSelectedTextFast() {
+            log("📝 Выделен текст '\(selected)' -> инвертирую")
+            invertAndReplace(selected)
         } else {
             DispatchQueue.main.async { self.toggleMacLayout() }
         }
     }
 
-    // MARK: - Инверсия последнего слова на Mac
+    // MARK: - Чтение и замена текста
+
+    private func getSelectedTextFast() -> String? {
+        // 1. Accessibility API
+        if let axText = selectedTextViaAccessibility(), !axText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return axText
+        }
+
+        // 2. Копирование через Cmd+C со сверкой changeCount
+        let pb = NSPasteboard.general
+        let countBefore = pb.changeCount
+
+        postKey(virtualKey: 8, flags: [.maskCommand]) // Cmd+C
+        for _ in 0..<8 {
+            usleep(10_000)
+            if pb.changeCount != countBefore {
+                if let str = pb.string(forType: .string), !str.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return str
+                }
+            }
+        }
+        return nil
+    }
 
     private func selectedTextViaAccessibility() -> String? {
         let systemWide = AXUIElementCreateSystemWide()
-
         var focusedRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            systemWide, kAXFocusedUIElementAttribute as CFString, &focusedRef
-        ) == .success, let focused = focusedRef else { return nil }
+        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+              let focused = focusedRef else { return nil }
 
         var selectedRef: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            focused as! AXUIElement, kAXSelectedTextAttribute as CFString, &selectedRef
-        ) == .success, let text = selectedRef as? String, !text.isEmpty else { return nil }
+        guard AXUIElementCopyAttributeValue(focused as! AXUIElement, kAXSelectedTextAttribute as CFString, &selectedRef) == .success,
+              let text = selectedRef as? String, !text.isEmpty else { return nil }
 
         return text
     }
 
-    private func typeText(_ text: String) {
-        let source = CGEventSource(stateID: .hidSystemState)
-        let units = Array(text.utf16)
-        let chunkSize = 16
+    private func invertLastWord() {
+        // Выделяем предыдущее слово через Option + Shift + Left
+        postKey(virtualKey: 123, flags: [.maskAlternate, .maskShift]) // Keycode 123 = Left Arrow
+        usleep(40_000)
 
-        for start in stride(from: 0, to: units.count, by: chunkSize) {
-            let chunk = Array(units[start..<min(start + chunkSize, units.count)])
-            for isDown in [true, false] {
-                guard let event = CGEvent(
-                    keyboardEventSource: source, virtualKey: 0, keyDown: isDown
-                ) else { continue }
-                event.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk)
-                event.post(tap: .cghidEventTap)
-            }
-            usleep(6_000)
+        // Копируем выделенное слово
+        if let text = getSelectedTextFast() {
+            invertAndReplace(text)
+        } else {
+            log("✖ Не удалось выделить слово для инверсии")
         }
     }
 
-    private func invertLastWordLocally() {
-        // 1. Пробуем взять выделенный текст
-        var text = selectedTextViaAccessibility()
-
-        // 2. Если ничего не выделено — выделяем последнее слово через Option+Shift+Left
-        if text == nil {
-            postKey(virtualKey: 123, flags: [.maskAlternate, .maskShift])
-            usleep(80_000)
-            text = selectedTextViaAccessibility()
-        }
-
-        guard let selected = text, !selected.isEmpty else {
-            log("✖ Выделение недоступно через Accessibility")
-            return
-        }
-
-        let sourceChars = Array(selected)
+    private func invertAndReplace(_ text: String) {
+        let sourceChars = Array(text)
         var invertedChars = [Character]()
         var enCount = 0
         var ruCount = 0
+
         for (index, char) in sourceChars.enumerated() {
             if char.isNumber || isNumericPunctuation(sourceChars, index) {
                 invertedChars.append(char)
@@ -308,16 +281,48 @@ final class DoubleShiftSwitcher {
         }
 
         guard enCount > 0 || ruCount > 0 else {
-            log("✖ В '\(selected)' нечего инвертировать")
+            log("✖ В тексте '\(text)' нечего инвертировать")
             return
         }
 
         let inverted = String(invertedChars)
-        log("🔄 Инверсия: '\(selected)' -> '\(inverted)'")
+        log("🔄 Инверсия: '\(text)' -> '\(inverted)'")
 
-        typeText(inverted)
-        usleep(60_000)
+        let pb = NSPasteboard.general
+        // Сохраняем исходный буфер
+        var savedItems: [[NSPasteboard.PasteboardType: Data]] = []
+        for item in pb.pasteboardItems ?? [] {
+            var itemData: [NSPasteboard.PasteboardType: Data] = [:]
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    itemData[type] = data
+                }
+            }
+            if !itemData.isEmpty {
+                savedItems.append(itemData)
+            }
+        }
 
+        // Вставляем инвертированный текст
+        pb.clearContents()
+        pb.setString(inverted, forType: .string)
+
+        postKey(virtualKey: 9, flags: [.maskCommand]) // Cmd+V
+        usleep(70_000)
+
+        // Восстанавливаем прежний буфер
+        if !savedItems.isEmpty {
+            pb.clearContents()
+            for itemData in savedItems {
+                let newItem = NSPasteboardItem()
+                for (type, data) in itemData {
+                    newItem.setData(data, forType: type)
+                }
+                pb.writeObjects([newItem])
+            }
+        }
+
+        // Переключаем раскладку
         let targetLanguage = enCount >= ruCount ? "ru" : "en"
         DispatchQueue.main.async { self.setMacLayout(to: targetLanguage) }
     }
@@ -333,6 +338,7 @@ final class DoubleShiftSwitcher {
             keyUp.flags = flags
             keyUp.post(tap: .cghidEventTap)
         }
+        usleep(15_000)
     }
 }
 
