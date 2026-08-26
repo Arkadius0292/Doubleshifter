@@ -3,15 +3,15 @@ import ApplicationServices
 import Carbon
 import Darwin
 
-// Double Shift Switcher v7.0.0 (Pure macOS All-in-One Double Shift)
+// Double Shift Switcher v7.1.1 (Pure macOS All-in-One Double Shift)
 //
-// ЕДИНСТВЕННЫЙ ЖЕСТ ДЛЯ ВСЕГО — ДВОЙНОЙ ТАП ПО SHIFT (без дополнительных клавиш!):
-//  1. Выделен текст (слово, строка, целый абзац) -> инвертирует раскладку выделенного текста и меняет язык
-//  2. Курсор сразу позади слова (без пробела, например "ghbdtn|") -> инвертирует последнее слово и меняет язык
+// СТРОГО ОДИН ДВОЙНОЙ ТАП ПО КЛАВИШЕ SHIFT (без дополнительных клавиш!):
+//  1. Выделен текст (слово, строка, целый абзац) -> инвертирует выделенный текст и меняет раскладку
+//  2. Курсор сразу позади слова (без пробела, например "ghbdtn|") -> инвертирует последнее слово и меняет раскладку
 //  3. Позади курсора пробел или пусто -> просто переключает раскладку (RU <-> EN)
 //  4. Буфер обмена (картинки, файлы) полностью сохраняется
 
-let appVersion = "7.0.0"
+let appVersion = "7.1.1"
 
 func log(_ message: String) {
     let stamp = ISO8601DateFormatter().string(from: Date())
@@ -32,7 +32,7 @@ func acquireSingleInstanceLock() {
 final class DoubleShiftSwitcher {
     private var lastShiftReleaseTime: TimeInterval = 0
     private var isShiftPressed = false
-    private let doubleTapThreshold: TimeInterval = 0.38
+    private let doubleTapThreshold: TimeInterval = 0.45
     var tap: CFMachPort?
 
     private let enToRu: [Character: Character] = [
@@ -62,56 +62,51 @@ final class DoubleShiftSwitcher {
     // MARK: - Запуск
 
     func start() {
-        log("🚀 Double Shift Switcher v\(appVersion) (All-in-One Double Shift) starting...")
+        log("🚀 Double Shift Switcher v\(appVersion) starting...")
 
-        let isTrusted = AXIsProcessTrusted()
-        log("🔐 Accessibility Trusted Status: \(isTrusted)")
+        var waitLogged = false
+        while tap == nil {
+            let eventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
+            tap = CGEvent.tapCreate(
+                tap: .cgSessionEventTap,
+                place: .headInsertEventTap,
+                options: .defaultTap,
+                eventsOfInterest: CGEventMask(eventMask),
+                callback: { (_, type, event, refcon) -> Unmanaged<CGEvent>? in
+                    guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
+                    let switcher = Unmanaged<DoubleShiftSwitcher>.fromOpaque(refcon).takeUnretainedValue()
 
-        let eventMask = (1 << CGEventType.flagsChanged.rawValue) | (1 << CGEventType.keyDown.rawValue)
-        guard let createdTap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .listenOnly,
-            eventsOfInterest: CGEventMask(eventMask),
-            callback: { (_, type, event, refcon) -> Unmanaged<CGEvent>? in
-                guard let refcon = refcon else { return Unmanaged.passUnretained(event) }
-                let switcher = Unmanaged<DoubleShiftSwitcher>.fromOpaque(refcon).takeUnretainedValue()
-
-                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-                    if let t = switcher.tap {
-                        CGEvent.tapEnable(tap: t, enable: true)
+                    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                        if let t = switcher.tap {
+                            CGEvent.tapEnable(tap: t, enable: true)
+                        }
+                        return Unmanaged.passUnretained(event)
                     }
-                    return Unmanaged.passUnretained(event)
-                }
 
-                switcher.handleEvent(type: type, event: event)
-                return Unmanaged.passUnretained(event)
-            },
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        ) else {
-            log("❌ Ошибка создания EventTap.")
-            return
+                    switcher.handleEvent(type: type, event: event)
+                    return Unmanaged.passUnretained(event)
+                },
+                userInfo: Unmanaged.passUnretained(self).toOpaque()
+            )
+
+            if tap == nil {
+                if !waitLogged {
+                    log("⚠️ Ожидаю включения тумблера DoubleShift в 'Системные настройки -> Универсальный доступ'...")
+                    waitLogged = true
+                }
+                Thread.sleep(forTimeInterval: 1.0)
+            }
         }
 
-        self.tap = createdTap
-        let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, createdTap, 0)
+        let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap!, 0)
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
-        CGEvent.tapEnable(tap: createdTap, enable: true)
+        CGEvent.tapEnable(tap: tap!, enable: true)
 
         log("✅ Double Shift Switcher v\(appVersion) активен и готов к работе!")
         CFRunLoopRun()
     }
 
     // MARK: - Раскладка macOS
-
-    private func primaryLanguage(of source: TISInputSource) -> String? {
-        guard let raw = TISGetInputSourceProperty(source, kTISPropertyInputSourceLanguages) else { return nil }
-        guard let languages = unsafeBitCast(raw, to: NSArray.self) as? [String] else { return nil }
-        guard let first = languages.first?.lowercased() else { return nil }
-        if first.hasPrefix("ru") { return "ru" }
-        if first.hasPrefix("en") { return "en" }
-        return first
-    }
 
     private func selectableLayouts() -> [(source: TISInputSource, lang: String)] {
         guard let list = TISCreateInputSourceList(nil, false)?.takeRetainedValue() as? [TISInputSource] else { return [] }
@@ -122,17 +117,25 @@ final class DoubleShiftSwitcher {
                   unsafeBitCast(categoryRaw, to: CFString.self) == kTISCategoryKeyboardInputSource,
                   let selectableRaw = TISGetInputSourceProperty(source, kTISPropertyInputSourceIsSelectCapable),
                   unsafeBitCast(selectableRaw, to: CFBoolean.self) == kCFBooleanTrue,
-                  let lang = primaryLanguage(of: source),
-                  lang == "ru" || lang == "en"
+                  let idRaw = TISGetInputSourceProperty(source, kTISPropertyInputSourceID)
             else { continue }
-            result.append((source, lang))
+            let id = unsafeBitCast(idRaw, to: NSString.self) as String
+            if id == "com.apple.keylayout.ABC" {
+                result.append((source, "en"))
+            } else if id.contains("Russian") {
+                result.append((source, "ru"))
+            }
         }
         return result
     }
 
     private func currentMacLanguage() -> String? {
         let current = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
-        return primaryLanguage(of: current)
+        guard let idRaw = TISGetInputSourceProperty(current, kTISPropertyInputSourceID) else { return nil }
+        let id = unsafeBitCast(idRaw, to: NSString.self) as String
+        if id == "com.apple.keylayout.ABC" { return "en" }
+        if id.contains("Russian") { return "ru" }
+        return nil
     }
 
     private func setMacLayout(to targetLanguage: String) {
@@ -146,10 +149,17 @@ final class DoubleShiftSwitcher {
         let layouts = selectableLayouts()
         guard layouts.count > 1 else { return }
         let current = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
-        let currentIndex = layouts.firstIndex { $0.source == current } ?? -1
-        let next = layouts[(currentIndex + 1) % layouts.count]
-        TISSelectInputSource(next.source)
-        log("🌐 Раскладка переключена -> \(next.lang)")
+        let currentIdRaw = TISGetInputSourceProperty(current, kTISPropertyInputSourceID)
+        let currentId = currentIdRaw != nil ? (unsafeBitCast(currentIdRaw, to: NSString.self) as String) : ""
+
+        if let other = layouts.first(where: {
+            let otherIdRaw = TISGetInputSourceProperty($0.source, kTISPropertyInputSourceID)
+            let otherId = otherIdRaw != nil ? (unsafeBitCast(otherIdRaw, to: NSString.self) as String) : ""
+            return otherId != currentId
+        }) {
+            TISSelectInputSource(other.source)
+            log("🌐 Раскладка переключена -> \(other.lang)")
+        }
     }
 
     // MARK: - Перехват двойного Shift
@@ -179,23 +189,23 @@ final class DoubleShiftSwitcher {
 
         isShiftPressed = false
         let now = Date().timeIntervalSince1970
-        guard (now - lastShiftReleaseTime) <= doubleTapThreshold else {
+        let elapsed = now - lastShiftReleaseTime
+
+        if elapsed <= doubleTapThreshold {
+            lastShiftReleaseTime = 0
+            log("⚡️ Двойной Shift пойман (интервал: \(String(format: "%.2f", elapsed)) с)")
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                self?.executeAllInOneDoubleShift()
+            }
+        } else {
             lastShiftReleaseTime = now
-            return
-        }
-        lastShiftReleaseTime = 0
-
-        log("⚡️ Двойной Shift получен")
-
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.executeAllInOneDoubleShift()
         }
     }
 
     // MARK: - Главная логика All-In-One
 
     private func executeAllInOneDoubleShift() {
-        // 1. Проверяем, есть ли УЖЕ выделенный текст (слово, фраза или абзац)
+        // 1. Проверяем, есть ли УЖЕ выделенный текст (слово, фраза или целый абзац)
         if let alreadySelected = getAlreadySelectedText() {
             log("📝 Обнаружен выделенный текст '\(alreadySelected)' -> инвертирую")
             invertAndReplace(alreadySelected)
@@ -274,19 +284,16 @@ final class DoubleShiftSwitcher {
         }
 
         guard let text = copiedStr, !text.isEmpty else {
-            // Ничего не скопировалось -> снимаем случайное выделение стрелкой вправо
             postKey(virtualKey: 124, flags: [])
             return nil
         }
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty {
-            // Были только пробелы -> возвращаем курсор вправо
             postKey(virtualKey: 124, flags: [])
             return nil
         }
 
-        // Проверяем, есть ли буквы для инверсии
         var hasInvertible = false
         for ch in trimmed {
             if enToRu[ch] != nil || ruToEn[ch] != nil {
@@ -296,7 +303,6 @@ final class DoubleShiftSwitcher {
         }
 
         if !hasInvertible {
-            // Только цифры или символы без букв -> снимаем выделение
             postKey(virtualKey: 124, flags: [])
             return nil
         }
@@ -333,7 +339,6 @@ final class DoubleShiftSwitcher {
         log("🔄 Инверсия: '\(text)' -> '\(inverted)'")
 
         let pb = NSPasteboard.general
-        // Сохраняем исходный буфер
         var savedItems: [[NSPasteboard.PasteboardType: Data]] = []
         for item in pb.pasteboardItems ?? [] {
             var itemData: [NSPasteboard.PasteboardType: Data] = [:]
@@ -347,14 +352,12 @@ final class DoubleShiftSwitcher {
             }
         }
 
-        // Вставляем инвертированный текст
         pb.clearContents()
         pb.setString(inverted, forType: .string)
 
         postKey(virtualKey: 9, flags: [.maskCommand]) // Cmd+V
         usleep(70_000)
 
-        // Восстанавливаем прежний буфер
         if !savedItems.isEmpty {
             pb.clearContents()
             for itemData in savedItems {
@@ -366,7 +369,6 @@ final class DoubleShiftSwitcher {
             }
         }
 
-        // Переключаем раскладку
         let targetLanguage = enCount >= ruCount ? "ru" : "en"
         DispatchQueue.main.async { self.setMacLayout(to: targetLanguage) }
     }
