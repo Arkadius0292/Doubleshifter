@@ -3,16 +3,15 @@ import ApplicationServices
 import Carbon
 import Darwin
 
-// Double Shift Switcher v6.2.0 (Pure macOS Edition)
+// Double Shift Switcher v7.0.0 (Pure macOS All-in-One Double Shift)
 //
-// Режимы работы:
-// 1. Двойной Shift (без Cmd):
-//    - Если текст ВЫДЕЛЕН (в любой программе) -> инвертирует выделенный фрагмент
-//    - Если текст НЕ выделен -> переключает раскладку (Русский <-> Английский)
-// 2. Cmd + Двойной Shift:
-//    - Всегда инвертирует последнее набранное слово (независимо от того, был ли пробел)
+// ЕДИНСТВЕННЫЙ ЖЕСТ ДЛЯ ВСЕГО — ДВОЙНОЙ ТАП ПО SHIFT (без дополнительных клавиш!):
+//  1. Выделен текст (слово, строка, целый абзац) -> инвертирует раскладку выделенного текста и меняет язык
+//  2. Курсор сразу позади слова (без пробела, например "ghbdtn|") -> инвертирует последнее слово и меняет язык
+//  3. Позади курсора пробел или пусто -> просто переключает раскладку (RU <-> EN)
+//  4. Буфер обмена (картинки, файлы) полностью сохраняется
 
-let appVersion = "6.2.0"
+let appVersion = "7.0.0"
 
 func log(_ message: String) {
     let stamp = ISO8601DateFormatter().string(from: Date())
@@ -63,7 +62,7 @@ final class DoubleShiftSwitcher {
     // MARK: - Запуск
 
     func start() {
-        log("🚀 Double Shift Switcher v\(appVersion) starting...")
+        log("🚀 Double Shift Switcher v\(appVersion) (All-in-One Double Shift) starting...")
 
         let isTrusted = AXIsProcessTrusted()
         log("🔐 Accessibility Trusted Status: \(isTrusted)")
@@ -99,7 +98,7 @@ final class DoubleShiftSwitcher {
         CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: createdTap, enable: true)
 
-        log("✅ Double Shift Switcher v\(appVersion) готов к работе!")
+        log("✅ Double Shift Switcher v\(appVersion) активен и готов к работе!")
         CFRunLoopRun()
     }
 
@@ -186,45 +185,50 @@ final class DoubleShiftSwitcher {
         }
         lastShiftReleaseTime = 0
 
-        let cmdPressed = flags.contains(.maskCommand)
-        log("⚡️ Двойной Shift (Cmd: \(cmdPressed))")
+        log("⚡️ Двойной Shift получен")
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            self?.processAction(forceLastWord: cmdPressed)
+            self?.executeAllInOneDoubleShift()
         }
     }
 
-    private func processAction(forceLastWord: Bool) {
-        if forceLastWord {
-            log("📝 Инверсия последнего слова (Cmd + Double Shift)")
-            invertLastWord()
+    // MARK: - Главная логика All-In-One
+
+    private func executeAllInOneDoubleShift() {
+        // 1. Проверяем, есть ли УЖЕ выделенный текст (слово, фраза или абзац)
+        if let alreadySelected = getAlreadySelectedText() {
+            log("📝 Обнаружен выделенный текст '\(alreadySelected)' -> инвертирую")
+            invertAndReplace(alreadySelected)
             return
         }
 
-        // Проверяем, выделен ли текст в данный момент
-        if let selected = getSelectedTextFast() {
-            log("📝 Выделен текст '\(selected)' -> инвертирую")
-            invertAndReplace(selected)
-        } else {
-            DispatchQueue.main.async { self.toggleMacLayout() }
+        // 2. Проверяем, есть ли слово прямо перед курсором (без пробела)
+        if let wordBehind = grabWordBehindCursor() {
+            log("📝 Обнаружено слово позади курсора '\(wordBehind)' -> инвертирую")
+            invertAndReplace(wordBehind)
+            return
         }
+
+        // 3. Позади курсора пусто или пробел -> просто меняем раскладку
+        log("🌐 Позади курсора нет слова -> переключаю раскладку")
+        DispatchQueue.main.async { self.toggleMacLayout() }
     }
 
-    // MARK: - Чтение и замена текста
+    // MARK: - Чтение и захват текста
 
-    private func getSelectedTextFast() -> String? {
+    private func getAlreadySelectedText() -> String? {
         // 1. Accessibility API
         if let axText = selectedTextViaAccessibility(), !axText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return axText
         }
 
-        // 2. Копирование через Cmd+C со сверкой changeCount
+        // 2. Проверяем буфер через быстрый Cmd+C
         let pb = NSPasteboard.general
         let countBefore = pb.changeCount
 
         postKey(virtualKey: 8, flags: [.maskCommand]) // Cmd+C
-        for _ in 0..<8 {
-            usleep(10_000)
+        for _ in 0..<5 {
+            usleep(8_000)
             if pb.changeCount != countBefore {
                 if let str = pb.string(forType: .string), !str.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     return str
@@ -247,17 +251,57 @@ final class DoubleShiftSwitcher {
         return text
     }
 
-    private func invertLastWord() {
-        // Выделяем предыдущее слово через Option + Shift + Left
-        postKey(virtualKey: 123, flags: [.maskAlternate, .maskShift]) // Keycode 123 = Left Arrow
-        usleep(40_000)
+    private func grabWordBehindCursor() -> String? {
+        let pb = NSPasteboard.general
+        let countBefore = pb.changeCount
 
-        // Копируем выделенное слово
-        if let text = getSelectedTextFast() {
-            invertAndReplace(text)
-        } else {
-            log("✖ Не удалось выделить слово для инверсии")
+        // Нажимаем Option + Shift + Left (выделить слово влево)
+        postKey(virtualKey: 123, flags: [.maskAlternate, .maskShift])
+        usleep(35_000)
+
+        // Копируем выделение через Cmd+C
+        postKey(virtualKey: 8, flags: [.maskCommand])
+        
+        var copiedStr: String?
+        for _ in 0..<8 {
+            usleep(10_000)
+            if pb.changeCount != countBefore {
+                if let str = pb.string(forType: .string) {
+                    copiedStr = str
+                    break
+                }
+            }
         }
+
+        guard let text = copiedStr, !text.isEmpty else {
+            // Ничего не скопировалось -> снимаем случайное выделение стрелкой вправо
+            postKey(virtualKey: 124, flags: [])
+            return nil
+        }
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            // Были только пробелы -> возвращаем курсор вправо
+            postKey(virtualKey: 124, flags: [])
+            return nil
+        }
+
+        // Проверяем, есть ли буквы для инверсии
+        var hasInvertible = false
+        for ch in trimmed {
+            if enToRu[ch] != nil || ruToEn[ch] != nil {
+                hasInvertible = true
+                break
+            }
+        }
+
+        if !hasInvertible {
+            // Только цифры или символы без букв -> снимаем выделение
+            postKey(virtualKey: 124, flags: [])
+            return nil
+        }
+
+        return text
     }
 
     private func invertAndReplace(_ text: String) {
