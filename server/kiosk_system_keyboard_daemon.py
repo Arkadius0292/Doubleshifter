@@ -245,9 +245,13 @@ def switch_mode_action(mode):
 def toggle_layout_action():
     try:
         sys.path.insert(0, "/usr/local/lib")
-        from doubleshift_xkb import toggle_lang
+        from doubleshift_xkb import toggle_lang, x_env
 
-        print(f"🌐 раскладка сервера → {toggle_lang()}")
+        # Демон слушает хоткеи только на :0 (DISPLAY задан в systemd-юните),
+        # поэтому это нажатие могло прийти только из RustDesk. toggle_lang()
+        # без явного env перебирает ВСЕ активные дисплеи и переключал заодно
+        # независимую RDP-сессию на :10, где никто ничего не нажимал.
+        print(f"🌐 раскладка сервера → {toggle_lang(x_env(':0'))}")
     except Exception as e:
         print("Layout toggle error:", e)
 
